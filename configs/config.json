@@ -1,3 +1,4 @@
 {
-    "SERVER_PORT": 3566
+    "SERVER_PORT": 3566,
+    "HOST": "0.0.0.0"
 }
