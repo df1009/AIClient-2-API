@@ -322,6 +322,7 @@ export async function handleStreamRequest(res, service, model, requestBody, from
     const addEvent = getProtocolPrefix(fromProvider) === MODEL_PROTOCOL_PREFIX.CLAUDE || getProtocolPrefix(fromProvider) === MODEL_PROTOCOL_PREFIX.OPENAI_RESPONSES;
 
     let hasToolCall = false;
+    let hasMessageStop = false; // 跟踪是否已经发送过结束标志（message_stop / done）
 
     try {
         for await (const nativeChunk of nativeStream) {
@@ -397,6 +398,20 @@ export async function handleStreamRequest(res, service, model, requestBody, from
                         // 修正 Gemini 原生格式的结束原因
                         chunk.candidates[0].finishReason = 'TOOL_CALLS';
                     }
+                }
+
+                // 防止重复发送结束标志
+                // OpenAI: choices[].finish_reason
+                // Claude: message_stop
+                // OpenAI Responses: done
+                // Gemini: candidates[].finishReason（如 STOP / MAX_TOKENS / SAFETY 等）
+                if (
+                    chunk?.choices?.some(choice => choice?.finish_reason) ||
+                    chunk?.type === 'message_stop' ||
+                    chunk?.type === 'done' ||
+                    chunk?.candidates?.some(candidate => candidate?.finishReason)
+                ) {
+                    hasMessageStop = true;
                 }
 
                 if (addEvent) {
@@ -479,14 +494,14 @@ export async function handleStreamRequest(res, service, model, requestBody, from
         // 如果底层未标记，且不跳过错误计数，则在此处标记
         if (!credentialMarkedUnhealthy && !skipErrorCount && providerPoolManager && pooluuid) {
             // 400 报错码通常是请求参数问题，不记录为提供商错误
-            if (status === 400) {
+            if (error.response?.status === 400) {
                 logger.info(`[Provider Pool] Skipping unhealthy marking for ${toProvider} (${pooluuid}) due to status 400 (client error)`);
             } else {
                 logger.info(`[Provider Pool] Marking ${toProvider} as unhealthy due to stream error (status: ${status || 'unknown'})`);
                 // 如果是号池模式，并且请求处理失败，则标记当前使用的提供者为不健康
                 providerPoolManager.markProviderUnhealthy(toProvider, {
                     uuid: pooluuid
-                });
+                }, error.message);
                 credentialMarkedUnhealthy = true;
             }
         } else if (credentialMarkedUnhealthy) {
@@ -574,13 +589,24 @@ export async function handleStreamRequest(res, service, model, requestBody, from
             if (!res.writableEnded) {
                 try {
                     if (clientProtocol === MODEL_PROTOCOL_PREFIX.OPENAI) {
-                        res.write('data: [DONE]\n\n');
+                        if (!hasMessageStop) {
+                            res.write('data: [DONE]\n\n');
+                            hasMessageStop = true;
+                        }
                     } else if (clientProtocol === MODEL_PROTOCOL_PREFIX.OPENAI_RESPONSES) {
-                        res.write('event: done\n');
-                        res.write('data: {}\n\n');
+                        // OpenAI Responses 以 response.completed/response.incomplete（或 error）作为结束事件。
+                        // 连接关闭即表示流结束；不要再追加 `event: done` + `data: {}`，否则会触发下游类型校验失败（AI_TypeValidationError）。
                     } else if (clientProtocol === MODEL_PROTOCOL_PREFIX.CLAUDE) {
-                        res.write('event: message_stop\n');
-                        res.write('data: {"type":"message_stop"}\n\n');
+                        if (!hasMessageStop) {
+                            res.write('event: message_stop\n');
+                            res.write('data: {"type":"message_stop"}\n\n');
+                            hasMessageStop = true;
+                        }
+                    } else if (clientProtocol === MODEL_PROTOCOL_PREFIX.GEMINI) {
+                        if (!hasMessageStop) {
+                            res.write('data: {"candidates":[{"finishReason":"STOP"}]}\n\n');
+                            hasMessageStop = true;
+                        }
                     }
                     res.end();
                 } catch (writeErr) {
@@ -666,14 +692,14 @@ export async function handleUnaryRequest(res, service, model, requestBody, fromP
         // 如果底层未标记，且不跳过错误计数，则在此处标记
         if (!credentialMarkedUnhealthy && !skipErrorCount && providerPoolManager && pooluuid) {
             // 400 报错码通常是请求参数问题，不记录为提供商错误
-            if (status === 400) {
+            if (error.response?.status === 400) {
                 logger.info(`[Provider Pool] Skipping unhealthy marking for ${toProvider} (${pooluuid}) due to status 400 (client error)`);
             } else {
                 logger.info(`[Provider Pool] Marking ${toProvider} as unhealthy due to unary error (status: ${status || 'unknown'})`);
                 // 如果是号池模式，并且请求处理失败，则标记当前使用的提供者为不健康
                 providerPoolManager.markProviderUnhealthy(toProvider, {
                     uuid: pooluuid
-                });
+                }, error.message);
                 credentialMarkedUnhealthy = true;
             }
         } else if (credentialMarkedUnhealthy) {
@@ -785,7 +811,7 @@ export async function handleModelListRequest(req, res, service, endpointType, CO
             // 如果是号池模式，并且请求处理失败，则标记当前使用的提供者为不健康
             providerPoolManager.markProviderUnhealthy(toProvider, {
                 uuid: pooluuid
-            });
+            }, error.message);
         }
     }
 }

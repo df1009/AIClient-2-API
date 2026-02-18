@@ -140,7 +140,12 @@ export class ClaudeConverter extends BaseConverter {
                         for (const item of msg.content) {
                             if (item && typeof item === 'object' && item.type === "tool_result") {
                                 const toolUseId = item.tool_use_id || item.id || "";
-                                const contentStr = String(item.content || "");
+                                let contentStr = item.content || "";
+                                if (typeof contentStr === 'object') {
+                                    contentStr = JSON.stringify(contentStr);
+                                } else {
+                                    contentStr = String(contentStr);
+                                }
                                 tempOpenAIMessages.push({
                                     role: "tool",
                                     tool_call_id: toolUseId,
@@ -1866,6 +1871,7 @@ export class ClaudeConverter extends BaseConverter {
             stream: true,
             store: false,
             parallel_tool_calls: true,
+            metadata: claudeRequest.metadata || {},
             reasoning: {
                 effort: claudeRequest.reasoning?.effort || 'medium',
                 summary: 'auto'

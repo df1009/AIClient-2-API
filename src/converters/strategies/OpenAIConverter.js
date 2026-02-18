@@ -150,10 +150,14 @@ export class OpenAIConverter extends BaseConverter {
 
             if (message.role === 'tool') {
                 // 工具结果消息
+                let toolContent = message.content;
+                if (typeof toolContent === 'object' && toolContent !== null) {
+                    toolContent = JSON.stringify(toolContent);
+                }
                 content.push({
                     type: 'tool_result',
                     tool_use_id: message.tool_call_id,
-                    content: safeParseJSON(message.content)
+                    content: toolContent
                 });
                 claudeMessages.push({ role: 'user', content: content });
             } else if (message.role === 'assistant' && (message.tool_calls?.length || message.function_calls?.length)) {
@@ -1342,7 +1346,7 @@ export class OpenAIConverter extends BaseConverter {
      * OpenAI请求 -> Codex请求（委托给 CodexConverter）
      */
     toCodexRequest(openaiRequest) {
-        return this.codexConverter.toCodexRequest(openaiRequest);
+        return this.codexConverter.toOpenAIRequestToCodexRequest(openaiRequest);
     }
 
     /**

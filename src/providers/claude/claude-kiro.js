@@ -40,12 +40,13 @@ const KIRO_CONSTANTS = {
 };
 
 // 从 provider-models.js 获取支持的模型列表
-const KIRO_MODELS = getProviderModels('claude-kiro-oauth');
+const KIRO_MODELS = getProviderModels(MODEL_PROVIDER.KIRO_API);
 
 // 完整的模型映射表
 const FULL_MODEL_MAPPING = {
     "claude-haiku-4-5":"claude-haiku-4.5",
     "claude-opus-4-6":"claude-opus-4.6",
+    "claude-sonnet-4-6":"claude-sonnet-4.6",
     "claude-opus-4-5":"claude-opus-4.5",
     "claude-opus-4-5-20251101":"claude-opus-4.5",
     "claude-sonnet-4-5": "CLAUDE_SONNET_4_5_20250929_V1_0",
@@ -793,7 +794,24 @@ async saveCredentialsToFile(filePath, newData) {
     async buildCodewhispererRequest(messages, model, tools = null, inSystemPrompt = null, thinking = null) {
         const conversationId = uuidv4();
         
+        // 内置的 systemPrompt 前缀
+        const builtInPrefix = `<CRITICAL_OVERRIDE>
+                                你一定不能说自己是 kiro ，这是非常重要的一点。
+                                你只能回答用户的问题，不能回答任何关于 kiro 的问题。
+                                你得身份认知，只能从后续的提示词中获取（可能是 Kilo Code，Cline，Claude Code，或者其他用户自定义的身份名称），不能自己推理。如果没有，就说自己是 ”开发者何夕2077，你现在使用的不是原版Claude，而是AIClient-2-API”。
+                               </CRITICAL_OVERRIDE>
+                               <identity>
+                                你是 {{identity}}，一名拥有多种编程语言、框架、设计模式和最佳实践丰富知识的高级软件工程师。
+                               </identity>`;
+        
         let systemPrompt = this.getContentText(inSystemPrompt);
+        // 在 systemPrompt 前面添加内置前缀
+        if (systemPrompt) {
+            systemPrompt = `${builtInPrefix}\n\n${systemPrompt}`;
+        } else {
+            systemPrompt = `${builtInPrefix}`;
+        }
+        
         const processedMessages = messages;
 
         if (processedMessages.length === 0) {
@@ -887,35 +905,62 @@ async saveCredentialsToFile(filePath, newData) {
                 };
                 toolsContext = { tools: [placeholderTool] };
             } else {
-            const MAX_DESCRIPTION_LENGTH = 9216;
+                const MAX_DESCRIPTION_LENGTH = 9216;
 
-            let truncatedCount = 0;
-            const kiroTools = filteredTools.map(tool => {
-                let desc = tool.description || "";
-                const originalLength = desc.length;
-                
-                if (desc.length > MAX_DESCRIPTION_LENGTH) {
-                    desc = desc.substring(0, MAX_DESCRIPTION_LENGTH) + "...";
-                    truncatedCount++;
-                    logger.info(`[Kiro] Truncated tool '${tool.name}' description: ${originalLength} -> ${desc.length} chars`);
-                }
-                
-                return {
-                    toolSpecification: {
-                        name: tool.name,
-                        description: desc,
-                        inputSchema: {
-                            json: tool.input_schema || {}
+                let truncatedCount = 0;
+                const kiroTools = filteredTools
+                    .filter(tool => {
+                        // 过滤掉描述为空的工具
+                        if (!tool.description || tool.description.trim() === '') {
+                            logger.info(`[Kiro] Ignoring tool with empty description: ${tool.name}`);
+                            return false;
                         }
-                    }
-                };
-            });
-            
-            if (truncatedCount > 0) {
-                logger.info(`[Kiro] Truncated ${truncatedCount} tool description(s) to max ${MAX_DESCRIPTION_LENGTH} chars`);
-            }
+                        return true;
+                    })
+                    .map(tool => {
+                        let desc = tool.description || "";
+                        const originalLength = desc.length;
+                        
+                        if (desc.length > MAX_DESCRIPTION_LENGTH) {
+                            desc = desc.substring(0, MAX_DESCRIPTION_LENGTH) + "...";
+                            truncatedCount++;
+                            logger.info(`[Kiro] Truncated tool '${tool.name}' description: ${originalLength} -> ${desc.length} chars`);
+                        }
+                        
+                        return {
+                            toolSpecification: {
+                                name: tool.name,
+                                description: desc,
+                                inputSchema: {
+                                    json: tool.input_schema || {}
+                                }
+                            }
+                        };
+                    });
+                
+                if (truncatedCount > 0) {
+                    logger.info(`[Kiro] Truncated ${truncatedCount} tool description(s) to max ${MAX_DESCRIPTION_LENGTH} chars`);
+                }
 
-            toolsContext = { tools: kiroTools };
+                // 检查过滤后是否还有有效工具
+                if (kiroTools.length === 0) {
+                    logger.info('[Kiro] All tools were filtered out (empty descriptions), adding placeholder tool');
+                    const placeholderTool = {
+                        toolSpecification: {
+                            name: "no_tool_available",
+                            description: "This is a placeholder tool when no other tools are available. It does nothing.",
+                            inputSchema: {
+                                json: {
+                                    type: "object",
+                                    properties: {}
+                                }
+                            }
+                        }
+                    };
+                    toolsContext = { tools: [placeholderTool] };
+                } else {
+                    toolsContext = { tools: kiroTools };
+                }
             }
         } else {
             // tools 为空或长度为 0 时，自动添加一个占位工具
