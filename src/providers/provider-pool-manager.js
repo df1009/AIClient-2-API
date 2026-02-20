@@ -8,6 +8,56 @@ import { broadcastEvent } from '../ui-modules/event-broadcast.js';
 import axios from 'axios';
 
 /**
+ * Weighted-Random + LRU hybrid selection algorithm.
+ * Groups candidates by weight, picks the LRU node from each group,
+ * then does a weighted-random pick among those group representatives.
+ */
+export function selectByWeightedLRU(candidates, now) {
+    if (!candidates || candidates.length === 0) return null;
+    if (candidates.length === 1) {
+        return {
+            selected: candidates[0],
+            debug: [{
+                uuid: candidates[0].uuid,
+                weight: candidates[0].weight || 100,
+                lastUsed: candidates[0].lastUsed || null,
+                isGroupLRU: true
+            }]
+        };
+    }
+    const groups = new Map();
+    for (const node of candidates) {
+        const w = node.weight || 100;
+        if (!groups.has(w)) groups.set(w, []);
+        groups.get(w).push(node);
+    }
+    const groupLRUs = [];
+    for (const [weight, nodes] of groups) {
+        nodes.sort((a, b) => {
+            const aTime = a.lastUsed ? new Date(a.lastUsed).getTime() : 0;
+            const bTime = b.lastUsed ? new Date(b.lastUsed).getTime() : 0;
+            return aTime - bTime;
+        });
+        groupLRUs.push({ weight, node: nodes[0] });
+    }
+    const totalWeight = groupLRUs.reduce((sum, g) => sum + g.weight, 0);
+    let random = Math.random() * totalWeight;
+    let selected = groupLRUs[groupLRUs.length - 1];
+    for (const g of groupLRUs) {
+        random -= g.weight;
+        if (random <= 0) { selected = g; break; }
+    }
+    const lruUuids = new Set(groupLRUs.map(g => g.node.uuid));
+    const debug = candidates.map(node => ({
+        uuid: node.uuid,
+        weight: node.weight || 100,
+        lastUsed: node.lastUsed || null,
+        isGroupLRU: lruUuids.has(node.uuid)
+    }));
+    return { selected: selected.node, debug };
+}
+
+/**
  * Manages a pool of API service providers, handling their health and selection.
  */
 export class ProviderPoolManager {
@@ -592,7 +642,15 @@ export class ProviderPoolManager {
                 // --- V2: 刷新监控字段 ---
                 providerConfig.needsRefresh = providerConfig.needsRefresh !== undefined ? providerConfig.needsRefresh : false;
                 providerConfig.refreshCount = providerConfig.refreshCount !== undefined ? providerConfig.refreshCount : 0;
-                
+
+                // Weight 初始化
+                if (providerConfig.weight !== undefined) {
+                    const w = parseInt(providerConfig.weight, 10);
+                    providerConfig.weight = (Number.isInteger(w) && w >= 1) ? w : 100;
+                } else {
+                    providerConfig.weight = 100;
+                }
+
                 // 优化2: 简化 lastErrorTime 处理逻辑
                 providerConfig.lastErrorTime = providerConfig.lastErrorTime instanceof Date
                     ? providerConfig.lastErrorTime.toISOString()
@@ -654,13 +712,13 @@ export class ProviderPoolManager {
      */
     _doSelectProvider(providerType, requestedModel, options) {
         const availableProviders = this.providerStatus[providerType] || [];
-        
+
         // 检查并恢复已到恢复时间的提供商
         this._checkAndRecoverScheduledProviders(providerType);
-        
+
         // 获取固定时间戳，确保排序过程中一致
         const now = Date.now();
-        
+
         let availableAndHealthyProviders = availableProviders.filter(p =>
             p.config.isHealthy && !p.config.isDisabled && !p.config.needsRefresh
         );
@@ -668,11 +726,9 @@ export class ProviderPoolManager {
         // 如果指定了模型，则排除不支持该模型的提供商
         if (requestedModel) {
             const modelFilteredProviders = availableAndHealthyProviders.filter(p => {
-                // 如果提供商没有配置 notSupportedModels，则认为它支持所有模型
                 if (!p.config.notSupportedModels || !Array.isArray(p.config.notSupportedModels)) {
                     return true;
                 }
-                // 检查 notSupportedModels 数组中是否包含请求的模型，如果包含则排除
                 return !p.config.notSupportedModels.includes(requestedModel);
             });
 
@@ -690,36 +746,67 @@ export class ProviderPoolManager {
             return null;
         }
 
-        // 改进：使用统一的评分策略进行选择
-        // 传入当前时间戳 now 确保一致性
-        const selected = availableAndHealthyProviders.sort((a, b) => {
-            const scoreA = this._calculateNodeScore(a, now);
-            const scoreB = this._calculateNodeScore(b, now);
-            if (scoreA !== scoreB) return scoreA - scoreB;
-            // 如果分值相同，使用 UUID 排序确保确定性
-            return a.uuid < b.uuid ? -1 : 1;
-        })[0];
+        // === Weighted-LRU hybrid selection ===
+        // 分离预热节点（60s 内做过健康检查）和普通节点
+        const FRESH_THRESHOLD = 60_000; // 60 seconds
+        const freshNodes = [];
+        const normalNodes = [];
 
-        // 始终更新 lastUsed（确保 LRU 策略生效，避免并发请求选到同一个 provider）
-        // usageCount 只在请求成功后才增加（由 skipUsageCount 控制）
+        for (const p of availableAndHealthyProviders) {
+            const lastHC = p.config.lastHealthCheckTime
+                ? new Date(p.config.lastHealthCheckTime).getTime()
+                : 0;
+            if (lastHC > 0 && (now - lastHC) < FRESH_THRESHOLD) {
+                freshNodes.push(p);
+            } else {
+                normalNodes.push(p);
+            }
+        }
+
+        let selected;
+
+        if (freshNodes.length > 0) {
+            // 预热节点走评分排序（优先消化刚健康检查过的节点）
+            freshNodes.sort((a, b) => {
+                const scoreA = this._calculateNodeScore(a, now);
+                const scoreB = this._calculateNodeScore(b, now);
+                if (scoreA !== scoreB) return scoreA - scoreB;
+                return a.uuid < b.uuid ? -1 : 1;
+            });
+            selected = freshNodes[0];
+            this._log('debug', `[WeightedLRU] Using fresh node: ${selected.config.uuid}`);
+        } else if (normalNodes.length > 0) {
+            // 普通节点走加权随机 + LRU
+            const candidates = normalNodes.map(p => p.config);
+            const result = selectByWeightedLRU(candidates, now);
+            if (!result) {
+                this._log('warn', `selectByWeightedLRU returned null for ${providerType}`);
+                return null;
+            }
+            // 找回 providerStatus wrapper
+            selected = normalNodes.find(p => p.config.uuid === result.selected.uuid);
+            this._log('debug', `[WeightedLRU] Selected: ${result.selected.uuid}, debug: ${JSON.stringify(result.debug)}`);
+        } else {
+            this._log('warn', `No available and healthy providers for type: ${providerType}`);
+            return null;
+        }
+
+        // 始终更新 lastUsed（确保 LRU 策略生效）
         selected.config.lastUsed = new Date().toISOString();
-        
-        // 更新自增序列号，确保即使毫秒级并发，也能在下一轮排序中被区分开
+
+        // 更新自增序列号
         this._selectionSequence++;
         selected.config._lastSelectionSeq = this._selectionSequence;
-        
-        // 强制打印选中日志，方便排查并发问题
+
         this._log('info', `[Concurrency Control] Atomic selection: ${selected.config.uuid} (Seq: ${this._selectionSequence})`);
 
         if (!options.skipUsageCount) {
             selected.config.usageCount++;
         }
-        // 使用防抖保存（文件 I/O 是异步的，但内存已经更新）
         this._debouncedSave(providerType);
 
-        this._log('debug', `Selected provider for ${providerType} (LRU): ${selected.config.uuid}${requestedModel ? ` for model: ${requestedModel}` : ''}${options.skipUsageCount ? ' (skip usage count)' : ''}`);
-        
-        return selected.config;
+        this._log('debug', `Selected provider for ${providerType} (WeightedLRU): ${selected.config.uuid}${requestedModel ? ` for model: ${requestedModel}` : ''}${options.skipUsageCount ? ' (skip usage count)' : ''}`);
+          return selected.config;
     }
 
     /**

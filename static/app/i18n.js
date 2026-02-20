@@ -530,6 +530,10 @@ const translations = {
         'modal.provider.refreshUnhealthyUuids.success': '已刷新 {count} 个节点的UUID',
         'modal.provider.refreshUnhealthyUuids.failed': '刷新失败',
         'modal.provider.kiroAuthHint': '使用 AWS Builder ID 登录方式时，需要 <code>clientId</code> 和 <code>clientSecret</code> 字段，可在同文件夹下的另一个 JSON 文件中获取',
+        'modal.provider.weight': '权重',
+        'modal.provider.weight.placeholder': '默认 100，数值越大被选中概率越高',
+        'modal.provider.weight.hint': '用于加权随机选点，默认 100。同权重节点按 LRU 轮流',
+        'modal.provider.weight.invalid': '权重必须是 >= 1 的正整数',
         
         // Pagination
         'pagination.showing': '显示 {start}-{end} / 共 {total} 条',
@@ -1329,6 +1333,10 @@ const translations = {
         'modal.provider.refreshUnhealthyUuids.success': 'Refreshed {count} UUID(s)',
         'modal.provider.refreshUnhealthyUuids.failed': 'Refresh failed',
         'modal.provider.kiroAuthHint': 'When using AWS Builder ID login, <code>clientId</code> and <code>clientSecret</code> fields are required, which can be found in another JSON file in the same folder',
+        'modal.provider.weight': 'Weight',
+        'modal.provider.weight.placeholder': 'Default 100, higher value = higher selection probability',
+        'modal.provider.weight.hint': 'Used for weighted-random selection, default 100. Same-weight nodes rotate by LRU',
+        'modal.provider.weight.invalid': 'Weight must be a positive integer (>= 1)',
         
         // Pagination
         'pagination.showing': 'Showing {start}-{end} of {total}',

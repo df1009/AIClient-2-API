@@ -13,7 +13,8 @@
       "lastUsed": null,
       "usageCount": 0,
       "errorCount": 0,
-      "lastErrorTime": null
+      "lastErrorTime": null,
+      "weight": 100
     },
     {
       "customName": "OpenAI节点2",
@@ -28,7 +29,8 @@
       "lastUsed": null,
       "usageCount": 0,
       "errorCount": 0,
-      "lastErrorTime": null
+      "lastErrorTime": null,
+      "weight": 100
     }
   ],
   "openaiResponses-custom": [
@@ -44,7 +46,8 @@
       "lastUsed": null,
       "usageCount": 0,
       "errorCount": 0,
-      "lastErrorTime": null
+      "lastErrorTime": null,
+      "weight": 100
     }
   ],
   "gemini-cli-oauth": [
@@ -60,7 +63,8 @@
       "lastUsed": null,
       "usageCount": 0,
       "errorCount": 0,
-      "lastErrorTime": null
+      "lastErrorTime": null,
+      "weight": 100
     },
     {
       "customName": "Gemini OAuth节点2",
@@ -74,7 +78,8 @@
       "lastUsed": null,
       "usageCount": 0,
       "errorCount": 0,
-      "lastErrorTime": null
+      "lastErrorTime": null,
+      "weight": 100
     }
   ],
   "claude-custom": [
@@ -90,7 +95,8 @@
       "lastUsed": null,
       "usageCount": 0,
       "errorCount": 0,
-      "lastErrorTime": null
+      "lastErrorTime": null,
+      "weight": 100
     },
     {
       "customName": "Claude节点2",
@@ -104,7 +110,8 @@
       "lastUsed": null,
       "usageCount": 0,
       "errorCount": 0,
-      "lastErrorTime": null
+      "lastErrorTime": null,
+      "weight": 100
     }
   ],
   "claude-kiro-oauth": [
@@ -119,7 +126,8 @@
       "lastUsed": null,
       "usageCount": 0,
       "errorCount": 0,
-      "lastErrorTime": null
+      "lastErrorTime": null,
+      "weight": 100
     },
     {
       "customName": "Kiro OAuth节点2",
@@ -132,7 +140,8 @@
       "lastUsed": null,
       "usageCount": 0,
       "errorCount": 0,
-      "lastErrorTime": null
+      "lastErrorTime": null,
+      "weight": 100
     }
   ],
   "openai-qwen-oauth": [
@@ -147,7 +156,8 @@
       "lastUsed": null,
       "usageCount": 0,
       "errorCount": 0,
-      "lastErrorTime": null
+      "lastErrorTime": null,
+      "weight": 100
     }
   ],
   "gemini-antigravity": [
@@ -163,7 +173,8 @@
       "lastUsed": null,
       "usageCount": 0,
       "errorCount": 0,
-      "lastErrorTime": null
+      "lastErrorTime": null,
+      "weight": 100
     },
     {
       "customName": "Antigravity节点2",
@@ -177,7 +188,8 @@
       "lastUsed": null,
       "usageCount": 0,
       "errorCount": 0,
-      "lastErrorTime": null
+      "lastErrorTime": null,
+      "weight": 100
     }
   ],
   "openai-iflow": [
@@ -193,7 +205,8 @@
       "lastUsed": null,
       "usageCount": 0,
       "errorCount": 0,
-      "lastErrorTime": null
+      "lastErrorTime": null,
+      "weight": 100
     },
     {
       "customName": "iFlow Token节点2",
@@ -207,7 +220,8 @@
       "lastUsed": null,
       "usageCount": 0,
       "errorCount": 0,
-      "lastErrorTime": null
+      "lastErrorTime": null,
+      "weight": 100
     }
   ]
 }

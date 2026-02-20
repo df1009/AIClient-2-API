@@ -398,6 +398,7 @@ function renderProviderList(providers) {
                                 <i class="${disabledIcon}"></i>
                                 <span data-i18n="upload.detail.status">状态</span>: <span data-i18n="${isDisabled ? 'modal.provider.status.disabled' : 'modal.provider.status.enabled'}">${disabledText}</span>
                             </span> |
+                            <span data-i18n="modal.provider.weight">权重</span>: ${provider.weight !== undefined ? provider.weight : 100} |
                             <span data-i18n="modal.provider.usageCount">使用次数</span>: ${provider.usageCount || 0} |
                             <span data-i18n="modal.provider.errorCount">失败次数</span>: ${provider.errorCount || 0} |
                             <span data-i18n="modal.provider.lastUsed">最后使用</span>: ${lastUsed}
@@ -453,7 +454,7 @@ function renderProviderConfig(provider) {
     
     // 先渲染基础配置字段（customName、checkModelName 和 checkHealth）
     let html = '<div class="form-grid">';
-    const baseFields = ['customName', 'checkModelName', 'checkHealth'];
+    const baseFields = ['customName', 'checkModelName', 'checkHealth', 'weight'];
     
     baseFields.forEach(fieldKey => {
         const displayLabel = getFieldLabel(fieldKey);
@@ -491,6 +492,20 @@ function renderProviderConfig(provider) {
                         <option value="true" ${isEnabled ? 'selected' : ''} data-i18n="modal.provider.enabled">启用</option>
                         <option value="false" ${!isEnabled ? 'selected' : ''} data-i18n="modal.provider.disabled">禁用</option>
                     </select>
+                </div>
+            `;
+        } else if (fieldKey === 'weight') {
+            const weightValue = value !== undefined && value !== null ? value : 100;
+            html += `
+                <div class="config-item">
+                    <label>${displayLabel}</label>
+                    <input type="number"
+                           value="${weightValue}"
+                           min="1"
+                           readonly
+                           data-config-key="${fieldKey}"
+                           data-config-value="${weightValue}"
+                           placeholder="${t('modal.provider.weight.placeholder')}">
                 </div>
             `;
         } else {
@@ -674,7 +689,7 @@ function getFieldOrder(provider) {
     const excludedFields = [
         'isHealthy', 'lastUsed', 'usageCount', 'errorCount', 'lastErrorTime',
         'uuid', 'isDisabled', 'lastHealthCheckTime', 'lastHealthCheckModel', 'lastErrorMessage',
-        'notSupportedModels', 'refreshCount', 'needsRefresh', '_lastSelectionSeq'
+        'notSupportedModels', 'refreshCount', 'needsRefresh', '_lastSelectionSeq', 'weight'
     ];
     
     // 从 getProviderTypeFields 获取字段顺序映射
@@ -910,7 +925,17 @@ async function saveProvider(uuid, event) {
     const modelCheckboxes = providerDetail.querySelectorAll(`.model-checkbox[data-uuid="${uuid}"]:checked`);
     const notSupportedModels = Array.from(modelCheckboxes).map(checkbox => checkbox.value);
     providerConfig.notSupportedModels = notSupportedModels;
-    
+
+    // Weight 类型转换
+    if (providerConfig.weight !== undefined) {
+        const w = parseInt(providerConfig.weight, 10);
+        if (!Number.isInteger(w) || w < 1) {
+            showToast(t('common.error'), t('modal.provider.weight.invalid'), 'error');
+            return;
+        }
+        providerConfig.weight = w;
+    }
+
     try {
         await window.apiClient.put(`/providers/${encodeURIComponent(providerType)}/${uuid}`, { providerConfig });
         await window.apiClient.post('/reload-config');
@@ -1090,6 +1115,10 @@ function showAddProviderForm(providerType) {
                     <option value="true" data-i18n="modal.provider.enabled">启用</option>
                 </select>
             </div>
+            <div class="form-group">
+                <label data-i18n="modal.provider.weight">${t('modal.provider.weight')}</label>
+                <input type="number" id="newWeight" min="1" value="100" placeholder="${t('modal.provider.weight.placeholder')}">
+            </div>
         </div>
         <div id="dynamicConfigFields">
             <!-- 动态配置字段将在这里显示 -->
@@ -1266,10 +1295,19 @@ async function addProvider(providerType) {
     const checkModelName = document.getElementById('newCheckModelName')?.value;
     const checkHealth = document.getElementById('newCheckHealth')?.value === 'true';
     
+    const weightInput = document.getElementById('newWeight')?.value;
+    const weight = weightInput ? parseInt(weightInput, 10) : 100;
+
+    if (weightInput && (!Number.isInteger(weight) || weight < 1)) {
+        showToast(t('common.error'), t('modal.provider.weight.invalid'), 'error');
+        return;
+    }
+
     const providerConfig = {
         customName: customName || '', // 允许为空
         checkModelName: checkModelName || '', // 允许为空
-        checkHealth
+        checkHealth,
+        weight: weight || 100
     };
     
     // 根据提供商类型动态收集配置字段（自动匹配 utils.js 中的定义）

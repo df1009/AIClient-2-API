@@ -96,7 +96,8 @@ function getFieldLabel(key) {
         'FORWARD_BASE_URL': 'Forward Base URL',
         'FORWARD_HEADER_NAME': t('modal.provider.field.headerName'),
         'FORWARD_HEADER_VALUE_PREFIX': t('modal.provider.field.headerPrefix'),
-        'USE_SYSTEM_PROXY_FORWARD': t('modal.provider.field.useSystemProxy')
+        'USE_SYSTEM_PROXY_FORWARD': t('modal.provider.field.useSystemProxy'),
+        'weight': t('modal.provider.weight')
     };
     
     return labelMap[key] || key;

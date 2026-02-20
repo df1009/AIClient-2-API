@@ -104,6 +104,25 @@ export async function handleAddProvider(req, res, currentConfig, providerPoolMan
         providerConfig.errorCount = providerConfig.errorCount || 0;
         providerConfig.lastErrorTime = providerConfig.lastErrorTime || null;
 
+        // Weight validation
+        if (providerConfig.weight !== undefined) {
+            const raw = providerConfig.weight;
+            if (typeof raw === 'number' && !Number.isInteger(raw)) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: { message: 'weight must be an integer, decimal values are not allowed' } }));
+                return true;
+            }
+            const w = parseInt(raw, 10);
+            if (!Number.isInteger(w) || w < 1) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: { message: 'weight must be a positive integer (>= 1)' } }));
+                return true;
+            }
+            providerConfig.weight = w;
+        } else {
+            providerConfig.weight = 100;
+        }
+
         const filePath = currentConfig.PROVIDER_POOLS_FILE_PATH || 'provider_pools.json';
         let providerPools = {};
         
@@ -202,6 +221,23 @@ export async function handleUpdateProvider(req, res, currentConfig, providerPool
             res.writeHead(404, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: { message: 'Provider not found' } }));
             return true;
+        }
+
+        // Weight validation (no default — only validate if provided)
+        if (providerConfig.weight !== undefined) {
+            const raw = providerConfig.weight;
+            if (typeof raw === 'number' && !Number.isInteger(raw)) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: { message: 'weight must be an integer, decimal values are not allowed' } }));
+                return true;
+            }
+            const w = parseInt(raw, 10);
+            if (!Number.isInteger(w) || w < 1) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: { message: 'weight must be a positive integer (>= 1)' } }));
+                return true;
+            }
+            providerConfig.weight = w;
         }
 
         // Update provider while preserving certain fields
