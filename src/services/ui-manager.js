@@ -100,7 +100,7 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
 
     // Update configuration
     if (method === 'POST' && pathParam === '/api/config') {
-        return await configApi.handleUpdateConfig(req, res, currentConfig);
+        return await configApi.handleUpdateConfig(req, res, currentConfig, providerPoolManager);
     }
 
     // Get system information
@@ -317,6 +317,11 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
     // Import AWS SSO credentials for Kiro
     if (method === 'POST' && pathParam === '/api/kiro/import-aws-credentials') {
         return await oauthApi.handleImportAwsCredentials(req, res);
+    }
+
+    // Import after-sale credentials for Kiro (自动售后导入)
+    if (method === 'POST' && pathParam === '/api/kiro/import-after-sale-credentials') {
+        return await oauthApi.handleImportAfterSaleCredentials(req, res);
     }
 
     // Get plugins list

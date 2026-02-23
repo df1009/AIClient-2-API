@@ -2701,6 +2701,209 @@ async function restartServiceAfterUpdate() {
     }
 }
 
+/**
+ * 自动售后 AWS 导入弹窗（Tab 切换：手动填写 / JSON 粘贴）
+ */
+function showAfterSaleImportModal() {
+    const existingModal = document.querySelector('.after-sale-import-modal');
+    if (existingModal) existingModal.remove();
+
+    const modal = document.createElement('div');
+    modal.className = 'provider-modal after-sale-import-modal';
+    modal.innerHTML = `
+        <div class="provider-modal-content" style="max-width:560px;">
+            <div class="provider-modal-header">
+                <h3><i class="fas fa-exchange-alt"></i> ${t('afterSale.import.title')}</h3>
+                <button class="modal-close" onclick="this.closest('.provider-modal').remove()"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="provider-modal-body">
+                <!-- Tab 切换栏 -->
+                <div class="as-import-tabs" style="display:flex;gap:0;margin-bottom:16px;border-bottom:2px solid #e5e7eb;">
+                    <button class="as-import-tab active" data-tab="manual" style="flex:1;padding:10px 0;border:none;background:none;cursor:pointer;font-size:14px;font-weight:600;color:#10b981;border-bottom:2px solid #10b981;margin-bottom:-2px;transition:all .2s;">
+                        <i class="fas fa-edit"></i> ${t('afterSale.import.tabManual') || '手动填写'}
+                    </button>
+                    <button class="as-import-tab" data-tab="json" style="flex:1;padding:10px 0;border:none;background:none;cursor:pointer;font-size:14px;font-weight:600;color:#6b7280;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .2s;">
+                        <i class="fas fa-paste"></i> ${t('afterSale.import.tabJson') || 'JSON 粘贴'}
+                    </button>
+                </div>
+
+                <!-- 公共字段 -->
+                <div class="form-group">
+                    <label>${t('afterSale.import.orderId')} *</label>
+                    <input type="number" id="asOrderId" class="form-control" min="1">
+                </div>
+                <div class="form-group">
+                    <label>${t('afterSale.import.accountInfo')} *</label>
+                    <input type="text" id="asAccountInfo" class="form-control" placeholder="account_info from order">
+                </div>
+
+                <!-- Tab 1: 手动填写 -->
+                <div class="as-tab-panel" id="asTabManual">
+                    <div class="form-group">
+                        <label>${t('afterSale.import.clientId')} *</label>
+                        <input type="text" id="asClientId" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>${t('afterSale.import.clientSecret')} *</label>
+                        <input type="text" id="asClientSecret" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>${t('afterSale.import.refreshToken')} *</label>
+                        <textarea id="asRefreshToken" class="form-control" rows="2"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>${t('afterSale.import.region')}</label>
+                        <input type="text" id="asRegion" class="form-control" placeholder="us-east-1">
+                    </div>
+                    <div class="form-group">
+                        <label>${t('afterSale.import.startUrl')}</label>
+                        <input type="text" id="asStartUrl" class="form-control" placeholder="">
+                    </div>
+                </div>
+
+                <!-- Tab 2: JSON 粘贴 -->
+                <div class="as-tab-panel" id="asTabJson" style="display:none;">
+                    <div class="form-group">
+                        <label>${t('afterSale.import.accountJson') || 'JSON 数据'} *</label>
+                        <textarea id="asAccountJson" class="form-control" rows="8" placeholder='${t('afterSale.import.jsonPlaceholder') || '粘贴包含 clientId, clientSecret, refreshToken 的 JSON'}'></textarea>
+                        <small id="asJsonHint" style="display:none;margin-top:4px;"></small>
+                    </div>
+                    <div style="padding:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;font-size:12px;color:#166534;">
+                        <i class="fas fa-info-circle"></i> ${t('afterSale.import.jsonFormatTip') || '支持格式：{ "clientId": "...", "clientSecret": "...", "refreshToken": "...", "region": "...", "startUrl": "..." }'}
+                    </div>
+                </div>
+
+                <div id="asResult" style="display:none;margin-top:8px;"></div>
+                <div class="form-actions" style="margin-top:12px;">
+                    <button class="btn btn-success" id="asSubmitBtn"><i class="fas fa-upload"></i> ${t('afterSale.import.submit')}</button>
+                    <button class="btn btn-secondary" onclick="this.closest('.provider-modal').remove()"><i class="fas fa-times"></i> ${t('afterSale.import.cancel')}</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // --- Tab 切换逻辑 ---
+    const tabs = modal.querySelectorAll('.as-import-tab');
+    const panelManual = modal.querySelector('#asTabManual');
+    const panelJson = modal.querySelector('#asTabJson');
+
+    function switchTab(targetTab) {
+        tabs.forEach(tab => {
+            const isActive = tab.dataset.tab === targetTab;
+            tab.classList.toggle('active', isActive);
+            tab.style.color = isActive ? '#10b981' : '#6b7280';
+            tab.style.borderBottomColor = isActive ? '#10b981' : 'transparent';
+        });
+        panelManual.style.display = targetTab === 'manual' ? 'block' : 'none';
+        panelJson.style.display = targetTab === 'json' ? 'block' : 'none';
+    }
+
+    tabs.forEach(tab => {
+        tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+    });
+
+    // --- JSON 解析 ---
+    const jsonArea = modal.querySelector('#asAccountJson');
+    const jsonHint = modal.querySelector('#asJsonHint');
+    let parsedJsonData = null;
+
+    jsonArea.addEventListener('input', () => {
+        parsedJsonData = null;
+        try {
+            let parsed = JSON.parse(jsonArea.value.trim());
+            if (Array.isArray(parsed)) parsed = parsed[0];
+            if (parsed.clientId && parsed.clientSecret && parsed.refreshToken) {
+                parsedJsonData = parsed;
+                jsonHint.style.display = 'block';
+                jsonHint.style.color = 'var(--success-color, #10b981)';
+                jsonHint.textContent = t('afterSale.import.jsonValid') || '✓ JSON 解析成功';
+            } else {
+                throw new Error('missing fields');
+            }
+        } catch {
+            if (jsonArea.value.trim()) {
+                jsonHint.style.display = 'block';
+                jsonHint.style.color = 'var(--danger-color, #ef4444)';
+                jsonHint.textContent = t('afterSale.import.jsonInvalid') || '✗ JSON 格式无效或缺少必填字段';
+            } else {
+                jsonHint.style.display = 'none';
+            }
+        }
+    });
+
+    // --- 提交 ---
+    modal.querySelector('#asSubmitBtn').addEventListener('click', async () => {
+        const orderId = parseInt(modal.querySelector('#asOrderId').value);
+        const accountInfo = modal.querySelector('#asAccountInfo').value.trim();
+        const resultDiv = modal.querySelector('#asResult');
+
+        // 根据当前激活的 Tab 获取凭据
+        const activeTab = modal.querySelector('.as-import-tab.active').dataset.tab;
+        let clientId, clientSecret, refreshToken, region, startUrl;
+
+        if (activeTab === 'json') {
+            if (!parsedJsonData) {
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = `<div class="alert alert-danger">${t('afterSale.import.jsonInvalid') || '请粘贴有效的 JSON 数据'}</div>`;
+                return;
+            }
+            clientId = parsedJsonData.clientId;
+            clientSecret = parsedJsonData.clientSecret;
+            refreshToken = parsedJsonData.refreshToken;
+            region = parsedJsonData.region || '';
+            startUrl = parsedJsonData.startUrl || '';
+        } else {
+            clientId = modal.querySelector('#asClientId').value.trim();
+            clientSecret = modal.querySelector('#asClientSecret').value.trim();
+            refreshToken = modal.querySelector('#asRefreshToken').value.trim();
+            region = modal.querySelector('#asRegion').value.trim();
+            startUrl = modal.querySelector('#asStartUrl').value.trim();
+        }
+
+        if (!orderId || !accountInfo || !clientId || !clientSecret || !refreshToken) {
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = `<div class="alert alert-danger">Please fill all required fields (*)</div>`;
+            return;
+        }
+
+        const submitBtn = modal.querySelector('#asSubmitBtn');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Importing...';
+        resultDiv.style.display = 'none';
+
+        try {
+            const resp = await window.apiClient.post('/kiro/import-after-sale-credentials', {
+                orderId,
+                accountInfo,
+                clientId,
+                clientSecret,
+                refreshToken,
+                region: region || undefined,
+                startUrl: startUrl || undefined
+            });
+
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = `<div class="alert alert-success">${t('afterSale.import.success')}<br>UUID: ${resp.provider?.uuid || ''}</div>`;
+            showToast(t('common.success'), t('afterSale.import.success'), 'success');
+            loadProviders();
+        } catch (error) {
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = `<div class="alert alert-danger">${error.message || 'Import failed'}</div>`;        } finally {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = `<i class="fas fa-upload"></i> ${t('afterSale.import.submit')}`;
+        }
+    });
+
+    // Close on background click
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+    });
+}
+
+window.showAfterSaleImportModal = showAfterSaleImportModal;
+
 export {
     loadSystemInfo,
     updateTimeDisplay,

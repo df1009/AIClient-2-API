@@ -80,7 +80,8 @@ export function createRequestHandler(config, providerPoolManager) {
         const pluginRouteHandled = await pluginManager.executeRoutes(method, path, req, res);
         if (pluginRouteHandled) return;
 
-        const uiHandled = await handleUIApiRequests(method, path, req, res, currentConfig, providerPoolManager);
+        // UI API 使用原始 config 引用，确保 POST /api/config 修改的是真正的 CONFIG 对象
+        const uiHandled = await handleUIApiRequests(method, path, req, res, config, providerPoolManager);
         if (uiHandled) return;
 
         // Ollama show endpoint with model name

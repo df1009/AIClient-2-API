@@ -182,7 +182,44 @@ async function loadConfiguration() {
         if (logIncludeTimestampEl) logIncludeTimestampEl.checked = data.LOG_INCLUDE_TIMESTAMP !== false;
         if (logMaxFileSizeEl) logMaxFileSizeEl.value = data.LOG_MAX_FILE_SIZE || 10485760;
         if (logMaxFilesEl) logMaxFilesEl.value = data.LOG_MAX_FILES || 10;
-        
+
+        // 自动售后配置
+        const afterSaleEnabledEl = document.getElementById('afterSaleEnabled');
+        if (afterSaleEnabledEl) afterSaleEnabledEl.checked = data.AUTO_AFTER_SALE_ENABLED !== false;
+        const afterSaleShopBaseUrlEl = document.getElementById('afterSaleShopBaseUrl');
+        if (afterSaleShopBaseUrlEl) afterSaleShopBaseUrlEl.value = data.AUTO_AFTER_SALE_SHOP_BASE_URL || 'https://kiroshop.xyz';
+        const afterSaleShopEmailEl = document.getElementById('afterSaleShopEmail');
+        if (afterSaleShopEmailEl) afterSaleShopEmailEl.value = data.AUTO_AFTER_SALE_SHOP_EMAIL || '';
+        const afterSaleShopPasswordEl = document.getElementById('afterSaleShopPassword');
+        if (afterSaleShopPasswordEl) afterSaleShopPasswordEl.value = data.AUTO_AFTER_SALE_SHOP_PASSWORD || '';
+        const afterSaleRegionEl = document.getElementById('afterSaleRegion');
+        if (afterSaleRegionEl) afterSaleRegionEl.value = data.AUTO_AFTER_SALE_REGION || '';
+        const afterSaleIntervalEl = document.getElementById('afterSaleInterval');
+        if (afterSaleIntervalEl) afterSaleIntervalEl.value = data.AUTO_AFTER_SALE_INTERVAL || 120000;
+        const afterSaleUrgentIntervalEl = document.getElementById('afterSaleUrgentInterval');
+        if (afterSaleUrgentIntervalEl) afterSaleUrgentIntervalEl.value = data.AUTO_AFTER_SALE_URGENT_INTERVAL || 10000;
+        const afterSaleMaxRetriesEl = document.getElementById('afterSaleMaxRetries');
+        if (afterSaleMaxRetriesEl) afterSaleMaxRetriesEl.value = data.AUTO_AFTER_SALE_MAX_URGENT_RETRIES || 30;
+
+        // 联动禁用/启用售后相关输入框
+        const afterSaleFieldIds = [
+            'afterSaleShopBaseUrl', 'afterSaleShopEmail', 'afterSaleShopPassword',
+            'afterSaleRegion', 'afterSaleInterval', 'afterSaleUrgentInterval', 'afterSaleMaxRetries'
+        ];
+        function toggleAfterSaleFields(enabled) {
+            const disabled = !enabled;
+            afterSaleFieldIds.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = disabled;
+            });
+        }
+        if (afterSaleEnabledEl) {
+            toggleAfterSaleFields(afterSaleEnabledEl.checked);
+            afterSaleEnabledEl.addEventListener('change', (e) => {
+                toggleAfterSaleFields(e.target.checked);
+            });
+        }
+
     } catch (error) {
         console.error('Failed to load configuration:', error);
     }
@@ -282,6 +319,36 @@ async function saveConfiguration() {
     config.LOG_INCLUDE_TIMESTAMP = document.getElementById('logIncludeTimestamp')?.checked !== false;
     config.LOG_MAX_FILE_SIZE = parseInt(document.getElementById('logMaxFileSize')?.value || 10485760);
     config.LOG_MAX_FILES = parseInt(document.getElementById('logMaxFiles')?.value || 10);
+
+    // 自动售后配置
+    config.AUTO_AFTER_SALE_ENABLED = document.getElementById('afterSaleEnabled')?.checked !== false;
+    config.AUTO_AFTER_SALE_SHOP_BASE_URL = document.getElementById('afterSaleShopBaseUrl')?.value?.trim() || 'https://kiroshop.xyz';
+    config.AUTO_AFTER_SALE_SHOP_EMAIL = document.getElementById('afterSaleShopEmail')?.value?.trim() || '';
+    config.AUTO_AFTER_SALE_SHOP_PASSWORD = document.getElementById('afterSaleShopPassword')?.value || '';
+    config.AUTO_AFTER_SALE_REGION = document.getElementById('afterSaleRegion')?.value?.trim() || '';
+    config.AUTO_AFTER_SALE_INTERVAL = parseInt(document.getElementById('afterSaleInterval')?.value) || 120000;
+    config.AUTO_AFTER_SALE_URGENT_INTERVAL = parseInt(document.getElementById('afterSaleUrgentInterval')?.value) || 10000;
+    config.AUTO_AFTER_SALE_MAX_URGENT_RETRIES = parseInt(document.getElementById('afterSaleMaxRetries')?.value) || 30;
+
+    // 最小值校验
+    if (config.AUTO_AFTER_SALE_INTERVAL < 30000) {
+        showToast(t('common.warning'), t('config.afterSale.intervalMin') || '巡检间隔不能小于 30000ms', 'warning');
+        return;
+    }
+    if (config.AUTO_AFTER_SALE_URGENT_INTERVAL < 5000) {
+        showToast(t('common.warning'), t('config.afterSale.urgentIntervalMin') || '紧急巡检间隔不能小于 5000ms', 'warning');
+        return;
+    }
+    if (config.AUTO_AFTER_SALE_MAX_URGENT_RETRIES < 1 || config.AUTO_AFTER_SALE_MAX_URGENT_RETRIES > 999) {
+        showToast(t('common.warning'), t('config.afterSale.maxRetriesRange') || '最大重试次数须在 1-999 之间', 'warning');
+        return;
+    }
+
+    // 售后启用时校验邮箱和密码
+    if (config.AUTO_AFTER_SALE_ENABLED && (!config.AUTO_AFTER_SALE_SHOP_EMAIL || !config.AUTO_AFTER_SALE_SHOP_PASSWORD)) {
+        showToast(t('common.warning'), t('config.afterSale.credentialsRequired') || '启用自动售后时，邮箱和密码不能为空', 'warning');
+        return;
+    }
 
     try {
         await window.apiClient.post('/config', config);

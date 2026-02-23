@@ -1,3 +1,4 @@
+import { promises as fsPromises } from 'fs';
 import { getRequestBody } from '../utils/common.js';
 import logger from '../utils/logger.js';
 import {
@@ -551,6 +552,146 @@ export async function handleImportAwsCredentials(req, res) {
                 error: error.message
             }));
         }
+        return true;
+    }
+}
+
+/**
+ * 自动售后 AWS 凭据导入
+ * POST /api/kiro/import-after-sale-credentials
+ */
+export async function handleImportAfterSaleCredentials(req, res) {
+    const sendError = (status, message) => {
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: message }));
+        return true;
+    };
+
+    try {
+        const body = await getRequestBody(req);
+        const { clientId, clientSecret, refreshToken, accountInfo, orderId, region, startUrl } = body;
+
+        // 1. 参数校验
+        const requiredFields = { clientId, clientSecret, refreshToken, accountInfo, orderId };
+        for (const [name, value] of Object.entries(requiredFields)) {
+            if (!value || (typeof value === 'string' && !value.trim())) {
+                return sendError(400, `缺少必填字段: ${name}`);
+            }
+        }
+        if (!Number.isInteger(orderId) || orderId <= 0) {
+            return sendError(400, 'orderId 必须为正整数');
+        }
+
+        // 2. 初始化商城客户端，查询订单获取 deliveryId + accountId
+        const { CONFIG } = await import('../core/config-manager.js');
+        const { AfterSaleShopClient } = await import('../auth/after-sale-shop-client.js');
+
+        const shopBaseUrl = CONFIG.AUTO_AFTER_SALE_SHOP_BASE_URL || 'https://kiroshop.xyz';
+        const shopEmail = CONFIG.AUTO_AFTER_SALE_SHOP_EMAIL;
+        const shopPassword = CONFIG.AUTO_AFTER_SALE_SHOP_PASSWORD;
+
+        if (!shopEmail || !shopPassword) {
+            return sendError(400, '请先在配置中填写商城邮箱和密码');
+        }
+
+        const shopClient = new AfterSaleShopClient(shopBaseUrl, shopEmail, shopPassword);
+
+        let orderData;
+        try {
+            orderData = await shopClient.getOrderDetail(orderId);
+        } catch (err) {
+            return sendError(500, `商城 API 调用失败: ${err.message}`);
+        }
+
+        if (!orderData.deliveries || orderData.deliveries.length === 0) {
+            return sendError(400, '该订单无交付记录');
+        }
+
+        const deliveryId = orderData.deliveries[0].id;
+        const matchedAccount = orderData.deliveries[0].account_data?.find(
+            acc => acc.account_info === accountInfo
+        );
+        if (!matchedAccount) {
+            return sendError(400, '未在订单中找到匹配的账号（accountInfo 不匹配）');
+        }
+        const accountId = matchedAccount.id;
+
+        // 3. 调用 importAwsCredentials 创建 provider 节点
+        const importResult = await importAwsCredentials({
+            clientId: clientId.trim(),
+            clientSecret: clientSecret.trim(),
+            accessToken: refreshToken.trim(),
+            refreshToken: refreshToken.trim(),
+            authMethod: 'builder-id',
+            startUrl: startUrl || ''
+        });
+
+        if (!importResult.success) {
+            return sendError(500, `AWS 凭据导入失败: ${importResult.error}`);
+        }
+
+        // 4. 追加 importSource + afterSaleMeta 到新节点（两步操作）
+        const poolsFilePath = CONFIG.PROVIDER_POOLS_FILE_PATH || 'configs/provider_pools.json';
+        const poolsRaw = await fsPromises.readFile(poolsFilePath, 'utf8');
+        const poolsData = JSON.parse(poolsRaw);
+        const kiroPool = poolsData['claude-kiro-oauth'] || [];
+
+        const newNode = kiroPool.find(p =>
+            p.KIRO_OAUTH_CREDS_FILE_PATH === importResult.path ||
+            p.KIRO_OAUTH_CREDS_FILE_PATH === './' + importResult.path
+        );
+
+        if (!newNode) {
+            return sendError(500, '导入成功但未找到新创建的 provider 节点');
+        }
+
+        newNode.importSource = 'auto-after-sale';
+        newNode.afterSaleMeta = {
+            orderId,
+            deliveryId,
+            accountId,
+            accountInfo,
+            startUrl: startUrl || '',
+            afterSaleExpired: false
+        };
+
+        // 5. 保存 provider_pools.json
+        await fsPromises.writeFile(poolsFilePath, JSON.stringify(poolsData, null, 2), 'utf8');
+        logger.info(`[AfterSale] Import success: uuid=${newNode.uuid}, orderId=${orderId}, accountId=${accountId}`);
+
+        // 同步更新 ProviderPoolManager 内存状态
+        try {
+            const { getProviderPoolManager } = await import('../services/service-manager.js');
+            const poolManager = getProviderPoolManager();
+            if (poolManager) {
+                const memProvider = poolManager.providerStatus['claude-kiro-oauth']?.find(
+                    p => p.config.uuid === newNode.uuid
+                );
+                if (memProvider) {
+                    memProvider.config.importSource = 'auto-after-sale';
+                    memProvider.config.afterSaleMeta = newNode.afterSaleMeta;
+                }
+            }
+        } catch (e) {
+            logger.warn('[AfterSale] Failed to sync memory state:', e.message);
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            success: true,
+            message: '自动售后账号导入成功',
+            provider: {
+                uuid: newNode.uuid,
+                importSource: 'auto-after-sale',
+                afterSaleMeta: newNode.afterSaleMeta
+            }
+        }));
+        return true;
+
+    } catch (error) {
+        logger.error('[AfterSale] Import error:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: error.message }));
         return true;
     }
 }

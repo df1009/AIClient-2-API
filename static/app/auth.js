@@ -125,6 +125,17 @@ class ApiClient {
                 throw new Error('未授权访问');
             }
 
+            // 检查HTTP状态码
+            if (!response.ok) {
+                const errorBody = await response.text();
+                let message = `HTTP ${response.status}`;
+                try {
+                    const parsed = JSON.parse(errorBody);
+                    message = parsed.error?.message || parsed.message || message;
+                } catch (_) {}
+                throw new Error(message);
+            }
+
             const contentType = response.headers.get('content-type');
             if (contentType && contentType.includes('application/json')) {
                 return await response.json();
@@ -206,6 +217,17 @@ class ApiClient {
             if (response.status === 401) {
                 this.handleUnauthorized();
                 throw new Error('未授权访问');
+            }
+
+            // 检查HTTP状态码
+            if (!response.ok) {
+                const errorBody = await response.text();
+                let message = `HTTP ${response.status}`;
+                try {
+                    const parsed = JSON.parse(errorBody);
+                    message = parsed.error?.message || parsed.message || message;
+                } catch (_) {}
+                throw new Error(message);
             }
 
             const contentType = response.headers.get('content-type');

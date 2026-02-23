@@ -68,10 +68,11 @@ export async function handleGetConfig(req, res, currentConfig) {
 /**
  * 更新配置
  */
-export async function handleUpdateConfig(req, res, currentConfig) {
+export async function handleUpdateConfig(req, res, currentConfig, providerPoolManager) {
     try {
         const body = await getRequestBody(req);
         const newConfig = body;
+        const previousAfterSaleEnabled = CONFIG.AUTO_AFTER_SALE_ENABLED;
 
         // Update config values in memory
         if (newConfig.REQUIRED_API_KEY !== undefined) currentConfig.REQUIRED_API_KEY = newConfig.REQUIRED_API_KEY;
@@ -108,6 +109,34 @@ export async function handleUpdateConfig(req, res, currentConfig) {
         if (newConfig.LOG_INCLUDE_TIMESTAMP !== undefined) currentConfig.LOG_INCLUDE_TIMESTAMP = newConfig.LOG_INCLUDE_TIMESTAMP;
         if (newConfig.LOG_MAX_FILE_SIZE !== undefined) currentConfig.LOG_MAX_FILE_SIZE = newConfig.LOG_MAX_FILE_SIZE;
         if (newConfig.LOG_MAX_FILES !== undefined) currentConfig.LOG_MAX_FILES = newConfig.LOG_MAX_FILES;
+
+        // --- 自动售后配置 ---
+        if (newConfig.AUTO_AFTER_SALE_ENABLED !== undefined) currentConfig.AUTO_AFTER_SALE_ENABLED = newConfig.AUTO_AFTER_SALE_ENABLED;
+        if (newConfig.AUTO_AFTER_SALE_INTERVAL !== undefined) currentConfig.AUTO_AFTER_SALE_INTERVAL = newConfig.AUTO_AFTER_SALE_INTERVAL;
+        if (newConfig.AUTO_AFTER_SALE_URGENT_INTERVAL !== undefined) currentConfig.AUTO_AFTER_SALE_URGENT_INTERVAL = newConfig.AUTO_AFTER_SALE_URGENT_INTERVAL;
+        if (newConfig.AUTO_AFTER_SALE_MAX_URGENT_RETRIES !== undefined) currentConfig.AUTO_AFTER_SALE_MAX_URGENT_RETRIES = newConfig.AUTO_AFTER_SALE_MAX_URGENT_RETRIES;
+        if (newConfig.AUTO_AFTER_SALE_SHOP_BASE_URL !== undefined) currentConfig.AUTO_AFTER_SALE_SHOP_BASE_URL = newConfig.AUTO_AFTER_SALE_SHOP_BASE_URL;
+        if (newConfig.AUTO_AFTER_SALE_SHOP_EMAIL !== undefined) currentConfig.AUTO_AFTER_SALE_SHOP_EMAIL = newConfig.AUTO_AFTER_SALE_SHOP_EMAIL;
+        if (newConfig.AUTO_AFTER_SALE_SHOP_PASSWORD !== undefined) currentConfig.AUTO_AFTER_SALE_SHOP_PASSWORD = newConfig.AUTO_AFTER_SALE_SHOP_PASSWORD;
+        if (newConfig.AUTO_AFTER_SALE_REGION !== undefined) currentConfig.AUTO_AFTER_SALE_REGION = newConfig.AUTO_AFTER_SALE_REGION;
+
+        // 数值范围校验
+        if (currentConfig.AUTO_AFTER_SALE_INTERVAL !== undefined && currentConfig.AUTO_AFTER_SALE_INTERVAL < 30000) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: { message: 'AUTO_AFTER_SALE_INTERVAL must be >= 30000' } }));
+            return true;
+        }
+        if (currentConfig.AUTO_AFTER_SALE_URGENT_INTERVAL !== undefined && currentConfig.AUTO_AFTER_SALE_URGENT_INTERVAL < 5000) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: { message: 'AUTO_AFTER_SALE_URGENT_INTERVAL must be >= 5000' } }));
+            return true;
+        }
+        if (currentConfig.AUTO_AFTER_SALE_MAX_URGENT_RETRIES !== undefined &&
+            (currentConfig.AUTO_AFTER_SALE_MAX_URGENT_RETRIES < 1 || currentConfig.AUTO_AFTER_SALE_MAX_URGENT_RETRIES > 999)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: { message: 'AUTO_AFTER_SALE_MAX_URGENT_RETRIES must be between 1 and 999' } }));
+            return true;
+        }
 
         // Handle system prompt update
         if (newConfig.systemPrompt !== undefined) {
@@ -165,7 +194,16 @@ export async function handleUpdateConfig(req, res, currentConfig) {
                 LOG_INCLUDE_REQUEST_ID: currentConfig.LOG_INCLUDE_REQUEST_ID,
                 LOG_INCLUDE_TIMESTAMP: currentConfig.LOG_INCLUDE_TIMESTAMP,
                 LOG_MAX_FILE_SIZE: currentConfig.LOG_MAX_FILE_SIZE,
-                LOG_MAX_FILES: currentConfig.LOG_MAX_FILES
+                LOG_MAX_FILES: currentConfig.LOG_MAX_FILES,
+                // --- 自动售后配置 ---
+                AUTO_AFTER_SALE_ENABLED: currentConfig.AUTO_AFTER_SALE_ENABLED,
+                AUTO_AFTER_SALE_INTERVAL: currentConfig.AUTO_AFTER_SALE_INTERVAL,
+                AUTO_AFTER_SALE_URGENT_INTERVAL: currentConfig.AUTO_AFTER_SALE_URGENT_INTERVAL,
+                AUTO_AFTER_SALE_MAX_URGENT_RETRIES: currentConfig.AUTO_AFTER_SALE_MAX_URGENT_RETRIES,
+                AUTO_AFTER_SALE_SHOP_BASE_URL: currentConfig.AUTO_AFTER_SALE_SHOP_BASE_URL,
+                AUTO_AFTER_SALE_SHOP_EMAIL: currentConfig.AUTO_AFTER_SALE_SHOP_EMAIL,
+                AUTO_AFTER_SALE_SHOP_PASSWORD: currentConfig.AUTO_AFTER_SALE_SHOP_PASSWORD,
+                AUTO_AFTER_SALE_REGION: currentConfig.AUTO_AFTER_SALE_REGION
             };
 
             writeFileSync(configPath, JSON.stringify(configToSave, null, 2), 'utf-8');
@@ -192,6 +230,20 @@ export async function handleUpdateConfig(req, res, currentConfig) {
 
         // Update the global CONFIG object to reflect changes immediately
         Object.assign(CONFIG, currentConfig);
+
+        // Toggle after-sale scheduler if AUTO_AFTER_SALE_ENABLED changed
+        if (providerPoolManager && newConfig.AUTO_AFTER_SALE_ENABLED !== undefined) {
+            const nowEnabled = CONFIG.AUTO_AFTER_SALE_ENABLED;
+            if (nowEnabled !== previousAfterSaleEnabled) {
+                if (nowEnabled) {
+                    logger.info('[UI API] AUTO_AFTER_SALE_ENABLED changed to true, starting scheduler');
+                    providerPoolManager.startAfterSaleScheduler();
+                } else {
+                    logger.info('[UI API] AUTO_AFTER_SALE_ENABLED changed to false, stopping scheduler');
+                    providerPoolManager.stopAfterSaleScheduler();
+                }
+            }
+        }
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({

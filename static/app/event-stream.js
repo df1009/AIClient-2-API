@@ -50,6 +50,14 @@ function initEventStream() {
         const data = JSON.parse(event.data);
         handleConfigUpdate(data);
     });
+
+    newEventSource.addEventListener('after_sale_replaced', (event) => {
+        const data = JSON.parse(event.data);
+        const orderId = data.orderId || '';
+        const msg = t('afterSale.replace.success').replace('{orderId}', orderId);
+        showToast(t('common.success'), msg, 'success');
+        if (loadProviders) loadProviders();
+    });
 }
 
 /**

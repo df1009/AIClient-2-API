@@ -74,6 +74,9 @@ function showProviderManagerModal(data) {
                         <button class="btn btn-danger" onclick="window.deleteUnhealthyProviders('${providerType}')" data-i18n="modal.provider.deleteUnhealthy" title="删除不健康节点">
                             <i class="fas fa-trash-alt"></i> <span data-i18n="modal.provider.deleteUnhealthyBtn">删除不健康</span>
                         </button>
+                        ${providerType === 'claude-kiro-oauth' ? `<button class="btn btn-primary" onclick="window.showAfterSaleImportModal()" title="自动售后导入">
+                            <i class="fas fa-exchange-alt"></i> <span data-i18n="afterSale.import.button">售后导入</span>
+                        </button>` : ''}
                     </div>
                 </div>
                 
@@ -384,11 +387,20 @@ function renderProviderList(providers) {
             `;
         }
         
+        // 构建售后标识
+        let afterSaleBadgeHtml = '';
+        if (provider.importSource === 'auto-after-sale') {
+            afterSaleBadgeHtml = `<span class="badge badge-info" style="margin-left:6px;font-size:11px;padding:1px 6px;border-radius:3px;background:#7c3aed;color:#fff;">${t('provider.badge.afterSale')}</span>`;
+            if (provider.afterSaleMeta?.afterSaleExpired) {
+                afterSaleBadgeHtml += `<span class="badge badge-secondary" style="margin-left:4px;font-size:11px;padding:1px 6px;border-radius:3px;background:#6b7280;color:#fff;">${t('provider.badge.afterSaleExpired')}</span>`;
+            }
+        }
+
         return `
             <div class="provider-item-detail ${healthClass} ${disabledClass}" data-uuid="${provider.uuid}">
                 <div class="provider-item-header" onclick="window.toggleProviderDetails('${provider.uuid}')">
                     <div class="provider-info">
-                        <div class="provider-name">${provider.customName || provider.uuid}</div>
+                        <div class="provider-name">${provider.customName || provider.uuid}${afterSaleBadgeHtml}</div>
                         <div class="provider-meta">
                             <span class="health-status">
                                 <i class="${healthIcon}"></i>

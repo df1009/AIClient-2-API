@@ -178,6 +178,12 @@ function setupWorkerCommunication() {
 async function gracefulShutdown() {
     logger.info('[Server] Initiating graceful shutdown...');
 
+    // 停止售后定时器
+    const poolManager = getProviderPoolManager();
+    if (poolManager) {
+        poolManager.stopAfterSaleScheduler();
+    }
+
     if (serverInstance) {
         serverInstance.close(() => {
             logger.info('[Server] HTTP server closed');
@@ -293,7 +299,10 @@ async function startServer() {
         logger.info(`  System Prompt Mode: ${CONFIG.SYSTEM_PROMPT_MODE}`);
         logger.info(`  Host: ${CONFIG.HOST}`);
         logger.info(`  Port: ${CONFIG.SERVER_PORT}`);
-        logger.info(`  Required API Key: ${CONFIG.REQUIRED_API_KEY}`);
+        const maskedKey = CONFIG.REQUIRED_API_KEY
+            ? CONFIG.REQUIRED_API_KEY.slice(0, 4) + '**'
+            : '(not set)';
+        logger.info(`  Required API Key: ${maskedKey}`);
         logger.info(`  Prompt Logging: ${CONFIG.PROMPT_LOG_MODE}${CONFIG.PROMPT_LOG_FILENAME ? ` (to ${CONFIG.PROMPT_LOG_FILENAME})` : ''}`);
         logger.info(`------------------------------------------`);
         logger.info(`\nUnified API Server running on http://${CONFIG.HOST}:${CONFIG.SERVER_PORT}`);
@@ -342,6 +351,9 @@ async function startServer() {
 
             // 启动不健康节点自动恢复定时任务
             poolManager.startAutoRecoveryScheduler();
+
+            // 启动售后自动换号定时任务
+            poolManager.startAfterSaleScheduler();
         }
 
         // 如果是子进程，通知主进程已就绪

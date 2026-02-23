@@ -6,6 +6,7 @@ import { MODEL_PROVIDER, getProtocolPrefix } from '../utils/common.js';
 import { getProviderModels } from './provider-models.js';
 import { broadcastEvent } from '../ui-modules/event-broadcast.js';
 import axios from 'axios';
+import { AfterSaleShopClient } from '../auth/after-sale-shop-client.js';
 
 /**
  * Weighted-Random + LRU hybrid selection algorithm.
@@ -130,7 +131,20 @@ export class ProviderPoolManager {
         this.autoRecoveryInterval = (options.globalConfig?.AUTO_RECOVERY_INTERVAL ?? 5) * 60 * 1000; // 默认5分钟
         this.autoRecoveryThreshold = (options.globalConfig?.AUTO_RECOVERY_UNHEALTHY_THRESHOLD ?? 50) / 100; // 默认50%
         this._autoRecoveryTimer = null;
- 
+
+        // --- 自动售后定时任务配置 ---
+        this.afterSaleEnabled = options.globalConfig?.AUTO_AFTER_SALE_ENABLED ?? true;
+        this.afterSaleInterval = options.globalConfig?.AUTO_AFTER_SALE_INTERVAL ?? 120000;
+        this.afterSaleUrgentInterval = options.globalConfig?.AUTO_AFTER_SALE_URGENT_INTERVAL ?? 10000;
+        this.afterSaleMaxUrgentRetries = options.globalConfig?.AUTO_AFTER_SALE_MAX_URGENT_RETRIES ?? 30;
+        this.afterSaleShopBaseUrl = options.globalConfig?.AUTO_AFTER_SALE_SHOP_BASE_URL || 'https://kiroshop.xyz';
+        this.afterSaleShopEmail = options.globalConfig?.AUTO_AFTER_SALE_SHOP_EMAIL || '';
+        this.afterSaleShopPassword = options.globalConfig?.AUTO_AFTER_SALE_SHOP_PASSWORD || '';
+        this.afterSaleRegion = options.globalConfig?.AUTO_AFTER_SALE_REGION || '';
+        this._afterSaleTimer = null;
+        this._afterSaleUrgentTimers = new Map();
+        this._shopClient = null;
+
         this.initializeProviderStatus();
     }
 
@@ -1768,6 +1782,364 @@ export class ProviderPoolManager {
         }
 
         this._log('info', '[AutoRecovery] Auto-recovery check completed');
+    }
+
+    // ==================== 自动售后相关方法 ====================
+
+    /**
+     * 延迟初始化商城 API 客户端
+     * @returns {AfterSaleShopClient|null}
+     */
+    _getShopClient() {
+        const baseUrl = this.globalConfig.AUTO_AFTER_SALE_SHOP_BASE_URL || this.afterSaleShopBaseUrl;
+        const email = this.globalConfig.AUTO_AFTER_SALE_SHOP_EMAIL || this.afterSaleShopEmail;
+        const password = this.globalConfig.AUTO_AFTER_SALE_SHOP_PASSWORD || this.afterSaleShopPassword;
+
+        if (!email || !password) {
+            return null;
+        }
+
+        if (this._shopClient &&
+            (this._shopClient.baseUrl !== baseUrl.replace(/\/$/, '') ||
+             this._shopClient.email !== email)) {
+            this._shopClient.clearToken();
+            this._shopClient = null;
+        }
+
+        if (!this._shopClient) {
+            this._shopClient = new AfterSaleShopClient(baseUrl, email, password);
+        }
+
+        return this._shopClient;
+    }
+
+    /**
+     * 启动售后常规扫描定时任务
+     */
+    startAfterSaleScheduler() {
+        const enabled = this.globalConfig.AUTO_AFTER_SALE_ENABLED ?? this.afterSaleEnabled;
+        const email = this.globalConfig.AUTO_AFTER_SALE_SHOP_EMAIL || this.afterSaleShopEmail;
+
+        if (!enabled || !email) {
+            this._log('info', '[AfterSale] Scheduler not started (disabled or shopEmail empty)');
+            return;
+        }
+
+        if (this._afterSaleTimer) {
+            clearInterval(this._afterSaleTimer);
+        }
+
+        const interval = this.globalConfig.AUTO_AFTER_SALE_INTERVAL ?? this.afterSaleInterval;
+        this._log('info', `[AfterSale] Scheduler started (interval: ${interval}ms)`);
+
+        this._afterSaleTimer = setInterval(async () => {
+            try {
+                await this._runAfterSaleScan();
+            } catch (error) {
+                this._log('error', `[AfterSale] Scan error: ${error.message}`);
+            }
+        }, interval);
+    }
+
+    /**
+     * 停止售后定时任务（含所有紧急换号定时器）
+     */
+    stopAfterSaleScheduler() {
+        if (this._afterSaleTimer) {
+            clearInterval(this._afterSaleTimer);
+            this._afterSaleTimer = null;
+            this._log('info', '[AfterSale] Scheduler stopped');
+        }
+
+        for (const [uuid, timerInfo] of this._afterSaleUrgentTimers) {
+            if (timerInfo.timerId) clearInterval(timerInfo.timerId);
+            this._log('info', `[AfterSale] Urgent timer cleared for ${uuid}`);
+        }
+        this._afterSaleUrgentTimers.clear();
+    }
+
+    /**
+     * 常规扫描：筛选售后不健康节点，检测封号
+     * @private
+     */
+    async _runAfterSaleScan() {
+        const enabled = this.globalConfig.AUTO_AFTER_SALE_ENABLED ?? this.afterSaleEnabled;
+        const email = this.globalConfig.AUTO_AFTER_SALE_SHOP_EMAIL || this.afterSaleShopEmail;
+        const password = this.globalConfig.AUTO_AFTER_SALE_SHOP_PASSWORD || this.afterSaleShopPassword;
+
+        if (!enabled || !email || !password) {
+            return;
+        }
+
+        this._log('info', '[AfterSale] Running scheduled scan...');
+
+        const providerType = 'claude-kiro-oauth';
+        const providers = this.providerStatus[providerType] || [];
+
+        // 清理已不存在的 urgent timer
+        for (const [uuid] of this._afterSaleUrgentTimers) {
+            const exists = providers.some(ps => ps.config.uuid === uuid);
+            if (!exists) {
+                this._clearUrgentTimer(uuid);
+            }
+        }
+
+        const targets = providers.filter(ps => {
+            const c = ps.config;
+            return c.importSource === 'auto-after-sale'
+                && !c.isHealthy
+                && !c.isDisabled
+                && !c.afterSaleMeta?.afterSaleExpired
+                && !this._afterSaleUrgentTimers.has(c.uuid);
+        });
+
+        if (targets.length === 0) {
+            this._log('info', '[AfterSale] No unhealthy after-sale nodes found');
+            return;
+        }
+
+        this._log('info', `[AfterSale] Found ${targets.length} unhealthy after-sale node(s) to check`);
+
+        for (const providerStatus of targets) {
+            const config = providerStatus.config;
+            const uuid = config.uuid;
+
+            try {
+                const healthResult = await this._checkProviderHealth(providerType, config, true);
+                if (healthResult?.success) {
+                    this.markProviderHealthy(providerType, config, false, healthResult.modelName);
+                    this._log('info', `[AfterSale] Node ${uuid} recovered, skipping ban check`);
+                    continue;
+                }
+
+                await this._checkBanStatus(providerType, config);
+            } catch (error) {
+                this._log('error', `[AfterSale] Error checking node ${uuid}: ${error.message}`);
+            }
+        }
+
+        this._log('info', '[AfterSale] Scan completed');
+    }
+
+    /**
+     * 检测指定节点是否被封号
+     * @private
+     */
+    async _checkBanStatus(providerType, providerConfig) {
+        const meta = providerConfig.afterSaleMeta;
+        const uuid = providerConfig.uuid;
+        const shopClient = this._getShopClient();
+
+        if (!shopClient) {
+            this._log('error', '[AfterSale] Shop client not available (missing credentials)');
+            return;
+        }
+
+        try {
+            const banResult = await shopClient.checkBan(meta.orderId, meta.deliveryId);
+            const results = banResult.results || [];
+
+            const matched = results.find(r => r.account_id === meta.accountId);
+
+            if (!matched) {
+                this._log('warn', `[AfterSale] Ban check: account_id ${meta.accountId} not found in results (uuid=${uuid})`);
+                return;
+            }
+
+            if (!matched.banned) {
+                this._log('info', `[AfterSale] Node ${uuid} not banned, skipping`);
+                return;
+            }
+
+            this._log('info', `[AfterSale] Node ${uuid} is BANNED (orderId=${meta.orderId}, accountId=${meta.accountId}), starting urgent replace`);
+            this._startUrgentReplace(providerType, providerConfig);
+        } catch (error) {
+            this._log('error', `[AfterSale] Ban check failed for ${uuid}: ${error.message}`);
+        }
+    }
+
+    /**
+     * 启动紧急换号定时器
+     * @private
+     */
+    _startUrgentReplace(providerType, providerConfig) {
+        const uuid = providerConfig.uuid;
+
+        if (this._afterSaleUrgentTimers.has(uuid)) {
+            this._log('warn', `[AfterSale] Urgent timer already exists for ${uuid}`);
+            return;
+        }
+
+        const interval = this.globalConfig.AUTO_AFTER_SALE_URGENT_INTERVAL ?? this.afterSaleUrgentInterval;
+        const timerInfo = { timerId: null, retryCount: 0 };
+
+        // 立即执行第一次
+        this._attemptReplace(providerType, providerConfig, timerInfo);
+
+        timerInfo.timerId = setInterval(() => {
+            this._attemptReplace(providerType, providerConfig, timerInfo);
+        }, interval);
+
+        this._afterSaleUrgentTimers.set(uuid, timerInfo);
+    }
+
+    /**
+     * 单次换号尝试
+     * @private
+     */
+    async _attemptReplace(providerType, providerConfig, timerInfo) {
+        const uuid = providerConfig.uuid;
+        const meta = providerConfig.afterSaleMeta;
+        const maxRetries = this.globalConfig.AUTO_AFTER_SALE_MAX_URGENT_RETRIES ?? this.afterSaleMaxUrgentRetries;
+
+        timerInfo.retryCount++;
+
+        if (timerInfo.retryCount > maxRetries) {
+            this._log('warn', `[AfterSale] Urgent replace exceeded max retries (${maxRetries}) for ${uuid}, falling back to regular scan`);
+            this._clearUrgentTimer(uuid);
+            return;
+        }
+
+        this._log('info', `[AfterSale] Replace attempt ${timerInfo.retryCount}/${maxRetries} for ${uuid} (orderId=${meta.orderId})`);
+
+        const shopClient = this._getShopClient();
+        if (!shopClient) {
+            this._log('error', '[AfterSale] Shop client not available');
+            return;
+        }
+
+        try {
+            const replaceResult = await shopClient.replaceBanned(meta.orderId, meta.deliveryId, meta.accountId);
+
+            if (replaceResult.success && replaceResult.new_account) {
+                await this._applyNewAccount(providerType, providerConfig, replaceResult.new_account);
+                this._clearUrgentTimer(uuid);
+            }
+        } catch (error) {
+            const status = error.response?.status;
+
+            if (status === 400) {
+                this._log('warn', `[AfterSale] Replace returned 400 for ${uuid}, marking afterSaleExpired=true`);
+                providerConfig.afterSaleMeta.afterSaleExpired = true;
+                this._debouncedSave(providerType);
+                this._clearUrgentTimer(uuid);
+            } else {
+                this._log('error', `[AfterSale] Replace failed for ${uuid} (HTTP ${status}): ${error.message}`);
+            }
+        }
+    }
+
+    /**
+     * 清除指定节点的紧急换号定时器
+     * @private
+     */
+    _clearUrgentTimer(uuid) {
+        const timerInfo = this._afterSaleUrgentTimers.get(uuid);
+        if (timerInfo) {
+            if (timerInfo.timerId) clearInterval(timerInfo.timerId);
+            this._afterSaleUrgentTimers.delete(uuid);
+            this._log('info', `[AfterSale] Urgent timer cleared for ${uuid}`);
+        }
+    }
+
+    /**
+     * 应用新账号：创建新节点、继承旧节点属性、禁用旧节点
+     * @private
+     */
+    async _applyNewAccount(providerType, oldProviderConfig, newAccount) {
+        const oldUuid = oldProviderConfig.uuid;
+        const oldMeta = oldProviderConfig.afterSaleMeta;
+
+        // 1. 解析凭据
+        let credentials;
+        try {
+            let parsed = JSON.parse(newAccount.account_json);
+            if (Array.isArray(parsed)) parsed = parsed[0];
+            const { clientId, clientSecret, refreshToken } = parsed;
+            if (!clientId || !clientSecret || !refreshToken) {
+                throw new Error('Missing required fields in account_json');
+            }
+            credentials = { clientId, clientSecret, refreshToken };
+        } catch (parseError) {
+            this._log('warn', `[AfterSale] account_json parse failed for ${oldUuid}: ${parseError.message}`);
+            return;
+        }
+
+        // 2. 确定 region
+        const region = this.globalConfig.AUTO_AFTER_SALE_REGION || this.afterSaleRegion || 'us-east-1';
+
+        // 3. 确定 startUrl
+        const startUrl = newAccount.subscription_url || oldMeta.startUrl || '';
+
+        // 4. 调用 importAwsCredentials 创建新节点
+        const { importAwsCredentials } = await import('../auth/oauth-handlers.js');
+
+        let importResult;
+        try {
+            importResult = await importAwsCredentials({
+                clientId: credentials.clientId,
+                clientSecret: credentials.clientSecret,
+                accessToken: credentials.refreshToken,
+                refreshToken: credentials.refreshToken,
+                authMethod: 'builder-id',
+                startUrl
+            });
+        } catch (importError) {
+            this._log('error', `[AfterSale] importAwsCredentials failed for ${oldUuid}: ${importError.message}`);
+            return;
+        }
+
+        if (!importResult.success) {
+            this._log('error', `[AfterSale] importAwsCredentials returned error for ${oldUuid}: ${importResult.error}`);
+            return;
+        }
+
+        // 5. 找到新节点，追加售后字段 + 继承旧节点属性
+        const pool = this.providerStatus[providerType] || [];
+        const newProviderStatus = pool.find(ps =>
+            ps.config.KIRO_OAUTH_CREDS_FILE_PATH === importResult.path ||
+            ps.config.KIRO_OAUTH_CREDS_FILE_PATH === './' + importResult.path
+        );
+
+        if (!newProviderStatus) {
+            this._log('error', `[AfterSale] New node not found in memory after import (path=${importResult.path})`);
+            return;
+        }
+
+        const newConfig = newProviderStatus.config;
+
+        newConfig.importSource = 'auto-after-sale';
+        newConfig.afterSaleMeta = {
+            orderId: oldMeta.orderId,
+            deliveryId: oldMeta.deliveryId,
+            accountId: newAccount.id,
+            accountInfo: newAccount.account_info,
+            startUrl: startUrl,
+            afterSaleExpired: false
+        };
+
+        // 继承旧节点属性
+        newConfig.weight = oldProviderConfig.weight || 100;
+        newConfig.notSupportedModels = oldProviderConfig.notSupportedModels || [];
+        newConfig.customName = oldProviderConfig.customName || '';
+        newConfig.priority = oldProviderConfig.priority || 0;
+
+        // 6. 旧节点标记 isDisabled
+        oldProviderConfig.isDisabled = true;
+
+        // 7. 保存
+        this._debouncedSave(providerType);
+
+        // 8. 广播事件
+        broadcastEvent('after_sale_replaced', {
+            oldUuid: oldUuid,
+            newUuid: newConfig.uuid,
+            orderId: oldMeta.orderId,
+            oldAccountId: oldMeta.accountId,
+            newAccountId: newAccount.id
+        });
+
+        this._log('info', `[AfterSale] Replace success: ${oldUuid} → ${newConfig.uuid}, newAccountId=${newAccount.id}`);
     }
 
 }
