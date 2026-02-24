@@ -1051,7 +1051,7 @@ export async function importAwsCredentials(credentials, skipDuplicateCheck = fal
             refreshToken: credentials.refreshToken,
             authMethod: credentials.authMethod || 'builder-id',
             // region: credentials.region || KIRO_REFRESH_CONSTANTS.DEFAULT_REGION,
-            idcRegion: credentials.idcRegion || KIRO_REFRESH_CONSTANTS.IDC_REGION
+            idcRegion: credentials.idcRegion || credentials.region || KIRO_REFRESH_CONSTANTS.IDC_REGION
         };
         
         // 可选字段
@@ -1069,7 +1069,7 @@ export async function importAwsCredentials(credentials, skipDuplicateCheck = fal
         try {
             logger.info(`${KIRO_OAUTH_CONFIG.logPrefix} Attempting to refresh token with provided credentials...`);
             
-            const refreshRegion = credentials.idcRegion || KIRO_REFRESH_CONSTANTS.IDC_REGION;
+            const refreshRegion = credentials.idcRegion || credentials.region || KIRO_REFRESH_CONSTANTS.IDC_REGION;
             const refreshUrl = KIRO_REFRESH_CONSTANTS.REFRESH_IDC_URL.replace('{{region}}', refreshRegion);
             
             const refreshResponse = await fetchWithProxy(refreshUrl, {
