@@ -143,6 +143,11 @@ export class ProviderPoolManager {
         this.afterSaleRegion = options.globalConfig?.AUTO_AFTER_SALE_REGION || '';
         this._afterSaleTimer = null;
         this._afterSaleUrgentTimers = new Map();
+        // region 重试列表：优先读配置，fallback 默认值
+        const configRegions = options.globalConfig?.AUTO_AFTER_SALE_REGIONS;
+        this.afterSaleRegions = (Array.isArray(configRegions) && configRegions.length > 0)
+            ? configRegions
+            : ["us-east-1", "eu-north-1"];
         this._shopClient = null;
 
         this.initializeProviderStatus();
@@ -1971,7 +1976,7 @@ export class ProviderPoolManager {
         }
 
         const interval = this.globalConfig.AUTO_AFTER_SALE_URGENT_INTERVAL ?? this.afterSaleUrgentInterval;
-        const timerInfo = { timerId: null, retryCount: 0 };
+        const timerInfo = { timerId: null, retryCount: 0, isRunning: false };
 
         // 立即执行第一次
         this._attemptReplace(providerType, providerConfig, timerInfo);
@@ -1992,40 +1997,52 @@ export class ProviderPoolManager {
         const meta = providerConfig.afterSaleMeta;
         const maxRetries = this.globalConfig.AUTO_AFTER_SALE_MAX_URGENT_RETRIES ?? this.afterSaleMaxUrgentRetries;
 
-        timerInfo.retryCount++;
-
-        if (timerInfo.retryCount > maxRetries) {
-            this._log('warn', `[AfterSale] Urgent replace exceeded max retries (${maxRetries}) for ${uuid}, falling back to regular scan`);
-            this._clearUrgentTimer(uuid);
+        // 重入防护：上一次还在执行中，跳过本次
+        if (timerInfo.isRunning) {
+            this._log("info", `[AfterSale] Skipping replace attempt for ${uuid}, previous attempt still running`);
             return;
         }
 
-        this._log('info', `[AfterSale] Replace attempt ${timerInfo.retryCount}/${maxRetries} for ${uuid} (orderId=${meta.orderId})`);
-
-        const shopClient = this._getShopClient();
-        if (!shopClient) {
-            this._log('error', '[AfterSale] Shop client not available');
-            return;
-        }
-
+        timerInfo.isRunning = true;
         try {
-            const replaceResult = await shopClient.replaceBanned(meta.orderId, meta.deliveryId, meta.accountId);
+            timerInfo.retryCount++;
 
-            if (replaceResult.success && replaceResult.new_account) {
-                await this._applyNewAccount(providerType, providerConfig, replaceResult.new_account);
+            if (timerInfo.retryCount > maxRetries) {
+                this._log('warn', `[AfterSale] Urgent replace exceeded max retries (${maxRetries}) for ${uuid}, falling back to regular scan`);
                 this._clearUrgentTimer(uuid);
+                return;
             }
-        } catch (error) {
-            const status = error.response?.status;
 
-            if (status === 400) {
-                this._log('warn', `[AfterSale] Replace returned 400 for ${uuid}, marking afterSaleExpired=true`);
-                providerConfig.afterSaleMeta.afterSaleExpired = true;
-                this._debouncedSave(providerType);
-                this._clearUrgentTimer(uuid);
-            } else {
-                this._log('error', `[AfterSale] Replace failed for ${uuid} (HTTP ${status}): ${error.message}`);
+            this._log('info', `[AfterSale] Replace attempt ${timerInfo.retryCount}/${maxRetries} for ${uuid} (orderId=${meta.orderId})`);
+
+            const shopClient = this._getShopClient();
+            if (!shopClient) {
+                this._log('error', '[AfterSale] Shop client not available');
+                return;
             }
+
+            try {
+                const replaceResult = await shopClient.replaceBanned(meta.orderId, meta.deliveryId, meta.accountId);
+
+                if (replaceResult.success && replaceResult.new_account) {
+                    await this._applyNewAccount(providerType, providerConfig, replaceResult.new_account);
+                    this._clearUrgentTimer(uuid);
+                }
+            } catch (error) {
+                const status = error.response?.status;
+
+                if (status === 400) {
+                    this._log('warn', `[AfterSale] Replace returned 400 for ${uuid}, marking afterSaleExpired=true`);
+                    providerConfig.afterSaleMeta.afterSaleExpired = true;
+                    providerConfig.afterSaleMeta.expiredReason = 'http_400';
+                    this._debouncedSave(providerType);
+                    this._clearUrgentTimer(uuid);
+                } else {
+                    this._log('error', `[AfterSale] Replace failed for ${uuid} (HTTP ${status}): ${error.message}`);
+                }
+            }
+        } finally {
+            timerInfo.isRunning = false;
         }
     }
 
@@ -2065,36 +2082,62 @@ export class ProviderPoolManager {
             return;
         }
 
-        // 2. 确定 region
-        const region = this.globalConfig.AUTO_AFTER_SALE_REGION || this.afterSaleRegion || 'us-east-1';
+        // 2. 确定 region 列表（region 重试）
+        const configRegions = this.globalConfig.AUTO_AFTER_SALE_REGIONS;
+        const regions = (Array.isArray(configRegions) && configRegions.length > 0)
+            ? configRegions
+            : (this.afterSaleRegions && this.afterSaleRegions.length > 0)
+                ? this.afterSaleRegions
+                : ["us-east-1", "eu-north-1"];
 
         // 3. 确定 startUrl
         const startUrl = newAccount.subscription_url || oldMeta.startUrl || '';
 
-        // 4. 调用 importAwsCredentials 创建新节点
+        // 4. region 重试循环
         const { importAwsCredentials } = await import('../auth/oauth-handlers.js');
 
-        let importResult;
-        try {
-            importResult = await importAwsCredentials({
-                clientId: credentials.clientId,
-                clientSecret: credentials.clientSecret,
-                accessToken: credentials.refreshToken,
-                refreshToken: credentials.refreshToken,
-                authMethod: 'builder-id',
-                startUrl
-            });
-        } catch (importError) {
-            this._log('error', `[AfterSale] importAwsCredentials failed for ${oldUuid}: ${importError.message}`);
+        let importResult = null;
+        let successRegion = null;
+
+        for (const region of regions) {
+            this._log('info', `[AfterSale] Trying region ${region} for ${oldUuid} (${regions.indexOf(region) + 1}/${regions.length})`);
+
+            try {
+                importResult = await importAwsCredentials({
+                    clientId: credentials.clientId,
+                    clientSecret: credentials.clientSecret,
+                    accessToken: credentials.refreshToken,
+                    refreshToken: credentials.refreshToken,
+                    authMethod: 'builder-id',
+                    startUrl,
+                    idcRegion: region,
+                    failOnRefreshError: true
+                });
+            } catch (importError) {
+                this._log('error', `[AfterSale] importAwsCredentials exception for ${oldUuid} region=${region}: ${importError.message}`);
+                importResult = { success: false, error: importError.message };
+            }
+
+            if (importResult.success) {
+                successRegion = region;
+                this._log('info', `[AfterSale] Import succeeded with region ${region} for ${oldUuid}`);
+                break;
+            }
+
+            this._log('warn', `[AfterSale] Region ${region} failed for ${oldUuid}: ${importResult.error || 'unknown'}`);
+        }
+
+        // 5. 所有 region 都失败 -> 标记 afterSaleExpired
+        if (!importResult?.success) {
+            this._log('warn', `[AfterSale] All regions failed for ${oldUuid}, marking afterSaleExpired=true`);
+            oldProviderConfig.afterSaleMeta.afterSaleExpired = true;
+            oldProviderConfig.afterSaleMeta.expiredReason = 'all_regions_failed';
+            this._debouncedSave(providerType);
+            this._clearUrgentTimer(oldUuid);
             return;
         }
 
-        if (!importResult.success) {
-            this._log('error', `[AfterSale] importAwsCredentials returned error for ${oldUuid}: ${importResult.error}`);
-            return;
-        }
-
-        // 5. 找到新节点，追加售后字段 + 继承旧节点属性
+        // 6. 找到新节点，追加售后字段 + 继承旧节点属性
         const pool = this.providerStatus[providerType] || [];
         const newProviderStatus = pool.find(ps =>
             ps.config.KIRO_OAUTH_CREDS_FILE_PATH === importResult.path ||
@@ -2124,22 +2167,23 @@ export class ProviderPoolManager {
         newConfig.customName = oldProviderConfig.customName || '';
         newConfig.priority = oldProviderConfig.priority || 0;
 
-        // 6. 旧节点标记 isDisabled
+        // 7. 旧节点标记 isDisabled
         oldProviderConfig.isDisabled = true;
 
-        // 7. 保存
+        // 8. 保存
         this._debouncedSave(providerType);
 
-        // 8. 广播事件
+        // 9. 广播事件
         broadcastEvent('after_sale_replaced', {
             oldUuid: oldUuid,
             newUuid: newConfig.uuid,
             orderId: oldMeta.orderId,
             oldAccountId: oldMeta.accountId,
-            newAccountId: newAccount.id
+            newAccountId: newAccount.id,
+            region: successRegion
         });
 
-        this._log('info', `[AfterSale] Replace success: ${oldUuid} → ${newConfig.uuid}, newAccountId=${newAccount.id}`);
+        this._log('info', `[AfterSale] Replace success: ${oldUuid} -> ${newConfig.uuid}, region=${successRegion}, newAccountId=${newAccount.id}`);
     }
 
 }

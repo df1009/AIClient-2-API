@@ -1093,11 +1093,26 @@ export async function importAwsCredentials(credentials, skipDuplicateCheck = fal
                 credentialsData.expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
                 logger.info(`${KIRO_OAUTH_CONFIG.logPrefix} Token refreshed successfully`);
             } else {
-                logger.warn(`${KIRO_OAUTH_CONFIG.logPrefix} Token refresh failed, saving original credentials`);
+                logger.warn(`${KIRO_OAUTH_CONFIG.logPrefix} Token refresh failed (HTTP ${refreshResponse.status}), region=${refreshRegion}`);
+                if (credentials.failOnRefreshError) {
+                    return {
+                        success: false,
+                        error: 'token_refresh_failed',
+                        httpStatus: refreshResponse.status,
+                        region: refreshRegion
+                    };
+                }
             }
         } catch (refreshError) {
-            logger.warn(`${KIRO_OAUTH_CONFIG.logPrefix} Token refresh error:`, refreshError.message);
-            // 继续保存原始凭据
+            logger.warn(`${KIRO_OAUTH_CONFIG.logPrefix} Token refresh error: ${refreshError.message}, region=${refreshRegion}`);
+            if (credentials.failOnRefreshError) {
+                return {
+                    success: false,
+                    error: 'token_refresh_exception',
+                    message: refreshError.message,
+                    region: refreshRegion
+                };
+            }
         }
         
         // 生成文件路径: configs/kiro/{timestamp}_kiro-auth-token/{timestamp}_kiro-auth-token.json
