@@ -143,6 +143,8 @@ export class ProviderPoolManager {
         this.afterSaleRegion = options.globalConfig?.AUTO_AFTER_SALE_REGION || '';
         this._afterSaleTimer = null;
         this._afterSaleUrgentTimers = new Map();
+        this.replacingUuids = new Set();
+        this._autoTagTimers = new Map();
         // region 重试列表：优先读配置，fallback 默认值
         const configRegions = options.globalConfig?.AUTO_AFTER_SALE_REGIONS;
         this.afterSaleRegions = (Array.isArray(configRegions) && configRegions.length > 0)
@@ -182,7 +184,7 @@ export class ProviderPoolManager {
                 
                 // logger.info(`Checking node ${providerStatus.uuid} (${providerType}) expiry date... configPath: ${configPath}`);
                 // 排除不健康和禁用的节点
-                if (!config.isHealthy || config.isDisabled) continue;
+                if (!config.isHealthy || config.isDisabled || config.isReplaced) continue;
 
                 if (configPath && fs.existsSync(configPath)) {
                     try {
@@ -215,7 +217,7 @@ export class ProviderPoolManager {
             
             // 挑选当前提供商下需要预热的节点
             const candidates = pool
-                .filter(p => p.config.isHealthy && !p.config.isDisabled && !this.refreshingUuids.has(p.uuid))
+                .filter(p => p.config.isHealthy && !p.config.isDisabled && !p.config.isReplaced && !this.refreshingUuids.has(p.uuid))
                 .sort((a, b) => {
                     // 优先级 A: 明确标记需要刷新的
                     if (a.config.needsRefresh && !b.config.needsRefresh) return -1;
@@ -486,7 +488,7 @@ export class ProviderPoolManager {
         const config = providerStatus.config;
         
         // 1. 基础健康分：不健康的排最后
-        if (!config.isHealthy || config.isDisabled) return 1e18;
+        if (!config.isHealthy || config.isDisabled || config.isReplaced) return 1e18;
         
         // 2. 预热/刷新分：60秒内刷新过且使用次数极少的节点视为“新鲜”，分数极低（最高优）
         const lastHealthCheckTime = config.lastHealthCheckTime ? new Date(config.lastHealthCheckTime).getTime() : 0;
@@ -527,7 +529,7 @@ export class ProviderPoolManager {
      * 获取指定类型的健康节点数量
      */
     getHealthyCount(providerType) {
-        return (this.providerStatus[providerType] || []).filter(p => p.config.isHealthy && !p.config.isDisabled).length;
+        return (this.providerStatus[providerType] || []).filter(p => p.config.isHealthy && !p.config.isDisabled && !p.config.isReplaced).length;
     }
 
     /**
@@ -681,6 +683,13 @@ export class ProviderPoolManager {
                 providerConfig.lastErrorMessage = providerConfig.lastErrorMessage || null;
                 providerConfig.customName = providerConfig.customName || null;
 
+                // --- 售后换号 + 标签字段 ---
+                providerConfig.isReplaced = providerConfig.isReplaced || false;
+                providerConfig.replacedByUuid = providerConfig.replacedByUuid || null;
+                providerConfig.replacedAt = providerConfig.replacedAt || null;
+                providerConfig.replacedFromUuid = providerConfig.replacedFromUuid || null;
+                providerConfig.tags = Array.isArray(providerConfig.tags) ? providerConfig.tags : [];
+
                 this.providerStatus[providerType].push({
                     config: providerConfig,
                     uuid: providerConfig.uuid, // Still keep uuid at the top level for easy access
@@ -739,7 +748,7 @@ export class ProviderPoolManager {
         const now = Date.now();
 
         let availableAndHealthyProviders = availableProviders.filter(p =>
-            p.config.isHealthy && !p.config.isDisabled && !p.config.needsRefresh
+            p.config.isHealthy && !p.config.isDisabled && !p.config.isReplaced && !p.config.needsRefresh
         );
 
         // 如果指定了模型，则排除不支持该模型的提供商
@@ -1018,7 +1027,7 @@ export class ProviderPoolManager {
         if (providers.length === 0) {
             return true;
         }
-        return providers.every(p => !p.config.isHealthy || p.config.isDisabled);
+        return providers.every(p => !p.config.isHealthy || p.config.isDisabled || p.config.isReplaced);
     }
 
     /**
@@ -1032,11 +1041,14 @@ export class ProviderPoolManager {
             total: providers.length,
             healthy: 0,
             unhealthy: 0,
-            disabled: 0
+            disabled: 0,
+            replaced: 0
         };
-        
+
         for (const p of providers) {
-            if (p.config.isDisabled) {
+            if (p.config.isReplaced) {
+                stats.replaced++;
+            } else if (p.config.isDisabled) {
                 stats.disabled++;
             } else if (p.config.isHealthy) {
                 stats.healthy++;
@@ -1323,6 +1335,10 @@ export class ProviderPoolManager {
 
         const provider = this._findProvider(providerType, providerConfig.uuid);
         if (provider) {
+            if (provider.config.isReplaced) {
+                this._log('warn', `Cannot enable replaced provider: ${providerConfig.uuid}`);
+                return { success: false, reason: 'replaced' };
+            }
             provider.config.isDisabled = false;
             this._log('info', `Enabled provider: ${providerConfig.uuid} for type ${providerType}`);
             this._debouncedSave(providerType);
@@ -1424,6 +1440,9 @@ export class ProviderPoolManager {
         for (const providerType in this.providerStatus) {
             for (const providerStatus of this.providerStatus[providerType]) {
                 const providerConfig = providerStatus.config;
+
+                // 跳过已换号的节点
+                if (providerConfig.isReplaced) continue;
 
                 // 如果提供商有 scheduledRecoveryTime 且未到恢复时间，跳过健康检查
                 if (providerConfig.scheduledRecoveryTime && !providerConfig.isHealthy) {
@@ -1726,7 +1745,7 @@ export class ProviderPoolManager {
                 continue;
             }
 
-            const unhealthyProviders = providers.filter(ps => !ps.config.isHealthy && !ps.config.isDisabled);
+            const unhealthyProviders = providers.filter(ps => !ps.config.isHealthy && !ps.config.isDisabled && !ps.config.isReplaced);
             const unhealthyRatio = unhealthyProviders.length / totalCount;
 
             if (unhealthyRatio <= this.autoRecoveryThreshold) {
@@ -1861,6 +1880,12 @@ export class ProviderPoolManager {
             this._log('info', `[AfterSale] Urgent timer cleared for ${uuid}`);
         }
         this._afterSaleUrgentTimers.clear();
+
+        // 清理自动打标签定时器
+        for (const [uuid, timerId] of this._autoTagTimers) {
+            clearTimeout(timerId);
+        }
+        this._autoTagTimers.clear();
     }
 
     /**
@@ -1894,6 +1919,7 @@ export class ProviderPoolManager {
             return c.importSource === 'auto-after-sale'
                 && !c.isHealthy
                 && !c.isDisabled
+                && !c.isReplaced
                 && !c.afterSaleMeta?.afterSaleExpired
                 && !this._afterSaleUrgentTimers.has(c.uuid);
         });
@@ -2000,6 +2026,12 @@ export class ProviderPoolManager {
         // 重入防护：上一次还在执行中，跳过本次
         if (timerInfo.isRunning) {
             this._log("info", `[AfterSale] Skipping replace attempt for ${uuid}, previous attempt still running`);
+            return;
+        }
+
+        // 手动换号互斥：如果该 uuid 正在被手动换号，跳过本轮定时任务
+        if (this.replacingUuids.has(uuid)) {
+            this._log("info", `[AfterSale] Skipping replace for ${uuid}, manual replace in progress`);
             return;
         }
 
@@ -2156,7 +2188,17 @@ export class ProviderPoolManager {
             orderId: oldMeta.orderId,
             deliveryId: oldMeta.deliveryId,
             accountId: newAccount.id,
-            accountInfo: newAccount.account_info,
+            accountInfo: (() => {
+                // 解析 subscription_info 为 "名称-密码" 格式
+                if (newAccount.subscription_info) {
+                    const parts = newAccount.subscription_info.split('----');
+                    if (parts.length >= 4 && parts[2] && parts[3]) {
+                        return `${parts[2].trim()}-${parts[3].trim()}`;
+                    }
+                }
+                return newAccount.account_info;
+            })(),
+            subscriptionInfoRaw: newAccount.subscription_info || '',
             startUrl: startUrl,
             afterSaleExpired: false
         };
@@ -2166,11 +2208,18 @@ export class ProviderPoolManager {
         newConfig.notSupportedModels = oldProviderConfig.notSupportedModels || [];
         newConfig.customName = oldProviderConfig.customName || '';
         newConfig.priority = oldProviderConfig.priority || 0;
+        newConfig.replacedFromUuid = oldUuid;
+        newConfig.tags = [];
 
-        // 7. 旧节点标记 isDisabled
-        oldProviderConfig.isDisabled = true;
+        // 7. 旧节点标记 isReplaced
+        oldProviderConfig.isReplaced = true;
+        oldProviderConfig.replacedByUuid = newConfig.uuid;
+        oldProviderConfig.replacedAt = new Date().toISOString();
 
-        // 8. 保存
+        // 8. 调度自动打标签
+        this._scheduleAutoTag(providerType, newConfig);
+
+        // 9. 保存
         this._debouncedSave(providerType);
 
         // 9. 广播事件
@@ -2184,6 +2233,69 @@ export class ProviderPoolManager {
         });
 
         this._log('info', `[AfterSale] Replace success: ${oldUuid} -> ${newConfig.uuid}, region=${successRegion}, newAccountId=${newAccount.id}`);
+    }
+
+    /**
+     * 调度自动打标签（换号成功后延迟执行）
+     * @private
+     */
+    _scheduleAutoTag(providerType, newConfig) {
+        const enabled = this.globalConfig.AUTO_AFTER_SALE_AUTO_TAG_ENABLED;
+        const tags = this.globalConfig.AUTO_AFTER_SALE_AUTO_TAG_TAGS;
+        const delay = this.globalConfig.AUTO_AFTER_SALE_AUTO_TAG_DELAY ?? 0;
+
+        if (!enabled || !Array.isArray(tags) || tags.length === 0) {
+            return;
+        }
+
+        const uuid = newConfig.uuid;
+
+        // 清理已有定时器
+        if (this._autoTagTimers.has(uuid)) {
+            clearTimeout(this._autoTagTimers.get(uuid));
+        }
+
+        const timerId = setTimeout(() => {
+            this._applyAutoTags(providerType, uuid, tags);
+            this._autoTagTimers.delete(uuid);
+        }, delay);
+
+        this._autoTagTimers.set(uuid, timerId);
+        this._log('info', `[AutoTag] Scheduled auto-tag for ${uuid} in ${delay}ms`);
+    }
+
+    /**
+     * 执行自动打标签
+     * @private
+     */
+    _applyAutoTags(providerType, uuid, tags) {
+        const pool = this.providerPools[providerType] || [];
+        const provider = pool.find(p => p.uuid === uuid);
+        if (!provider) {
+            this._log('warn', `[AutoTag] Provider ${uuid} not found, skipping`);
+            return;
+        }
+
+        if (!Array.isArray(provider.tags)) {
+            provider.tags = [];
+        }
+
+        const cleaned = tags
+            .filter(t => typeof t === 'string' && t.trim())
+            .map(t => t.trim().slice(0, 50));
+
+        const merged = [...new Set([...provider.tags, ...cleaned])].slice(0, 20);
+        provider.tags = merged;
+
+        // 同步 providerStatus
+        const statusPool = this.providerStatus[providerType] || [];
+        const ps = statusPool.find(s => s.config.uuid === uuid);
+        if (ps) {
+            ps.config.tags = merged;
+        }
+
+        this._debouncedSave(providerType);
+        this._log('info', `[AutoTag] Applied tags to ${uuid}: [${merged.join(', ')}]`);
     }
 
 }

@@ -344,8 +344,16 @@
                     </div>
                 </div>
                 <div class="form-group">
-                    <label for="afterSaleRegion" data-i18n="config.afterSale.region">全局 Region 覆盖</label>
-                    <input type="text" id="afterSaleRegion" class="form-control" placeholder="留空则使用节点自身 region">
+                    <label for="afterSaleRegions">Region 重试列表</label>
+                    <input type="text" id="afterSaleRegions" class="form-control" placeholder="us-east-1, eu-north-1" value="us-east-1, eu-north-1">
+                    <small style="color:#6b7280;">逗号分隔，导入和换号时按顺序尝试</small>
+                </div>
+                <div class="form-group">
+                    <label for="afterSaleFailOnRefreshError">导入时验证凭据有效性</label>
+                    <select id="afterSaleFailOnRefreshError" class="form-control">
+                        <option value="true" selected>是（推荐，无效凭据直接报错）</option>
+                        <option value="false">否（跳过验证，允许导入无效凭据）</option>
+                    </select>
                 </div>
                 <div class="form-row">
                     <div class="form-group">

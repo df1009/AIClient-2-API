@@ -2734,7 +2734,10 @@ function showAfterSaleImportModal() {
                 </div>
                 <div class="form-group">
                     <label>${t('afterSale.import.accountInfo')} *</label>
-                    <input type="text" id="asAccountInfo" class="form-control" placeholder="account_info from order">
+                    <div id="asAccountInfoWrapper">
+                        <input type="text" id="asAccountInfo" class="form-control" placeholder="${t('afterSale.import.accountSelect') || '名称-密码'}">
+                    </div>
+                    <small id="asAccountHint" style="display:none;margin-top:4px;"></small>
                 </div>
 
                 <!-- Tab 1: 手动填写 -->
@@ -2752,10 +2755,6 @@ function showAfterSaleImportModal() {
                         <textarea id="asRefreshToken" class="form-control" rows="2"></textarea>
                     </div>
                     <div class="form-group">
-                        <label>${t('afterSale.import.region')}</label>
-                        <input type="text" id="asRegion" class="form-control" placeholder="us-east-1">
-                    </div>
-                    <div class="form-group">
                         <label>${t('afterSale.import.startUrl')}</label>
                         <input type="text" id="asStartUrl" class="form-control" placeholder="">
                     </div>
@@ -2765,7 +2764,7 @@ function showAfterSaleImportModal() {
                 <div class="as-tab-panel" id="asTabJson" style="display:none;">
                     <div class="form-group">
                         <label>${t('afterSale.import.accountJson') || 'JSON 数据'} *</label>
-                        <textarea id="asAccountJson" class="form-control" rows="8" placeholder='${t('afterSale.import.jsonPlaceholder') || '粘贴包含 clientId, clientSecret, refreshToken 的 JSON'}'></textarea>
+                        <textarea id="asAccountJson" class="form-control" rows="8" placeholder='${t('afterSale.import.jsonPlaceholder') || '粘贴包含 clientId, clientSecret, refreshToken, region 的 JSON'}'></textarea>
                         <small id="asJsonHint" style="display:none;margin-top:4px;"></small>
                     </div>
                     <div style="padding:10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;font-size:12px;color:#166534;">
@@ -2775,8 +2774,8 @@ function showAfterSaleImportModal() {
 
                 <div id="asResult" style="display:none;margin-top:8px;"></div>
                 <div class="form-actions" style="margin-top:12px;">
-                    <button class="btn btn-success" id="asSubmitBtn"><i class="fas fa-upload"></i> ${t('afterSale.import.submit')}</button>
-                    <button class="btn btn-secondary" onclick="this.closest('.provider-modal').remove()"><i class="fas fa-times"></i> ${t('afterSale.import.cancel')}</button>
+                    <button type="button" class="btn btn-success" id="asSubmitBtn"><i class="fas fa-upload"></i> ${t('afterSale.import.submit')}</button>
+                    <button type="button" class="btn btn-secondary" id="asCancelBtn"><i class="fas fa-times"></i> ${t('afterSale.import.cancel')}</button>
                 </div>
             </div>
         </div>
@@ -2804,10 +2803,137 @@ function showAfterSaleImportModal() {
         tab.addEventListener('click', () => switchTab(tab.dataset.tab));
     });
 
+    // --- orderId 变更时自动拉取账号列表 ---
+    let asDebounceTimer = null;
+    const orderIdInput = modal.querySelector('#asOrderId');
+
+    // 存储账号凭据映射，key=accountValue
+    let accountCredentialsMap = {};
+    let parsedJsonData = null;
+
+    function autoFillCredentials(acc) {
+        if (!acc) return;
+        // 填充手动 Tab 字段
+        const ciEl = modal.querySelector('#asClientId');
+        const csEl = modal.querySelector('#asClientSecret');
+        const rtEl = modal.querySelector('#asRefreshToken');
+        const suEl = modal.querySelector('#asStartUrl');
+        if (ciEl) ciEl.value = acc.clientId || '';
+        if (csEl) csEl.value = acc.clientSecret || '';
+        if (rtEl) rtEl.value = acc.refreshToken || '';
+        if (suEl) suEl.value = acc.startUrl || '';
+        // 同步填充 JSON Tab
+        const jsonArea = modal.querySelector('#asAccountJson');
+        const jsonHint = modal.querySelector('#asJsonHint');
+        if (jsonArea && acc.clientId) {
+            const jsonObj = {
+                clientId: acc.clientId,
+                clientSecret: acc.clientSecret,
+                refreshToken: acc.refreshToken,
+                startUrl: acc.startUrl || undefined
+            };
+            jsonArea.value = JSON.stringify(jsonObj, null, 2);
+            parsedJsonData = jsonObj;
+            if (jsonHint) {
+                jsonHint.style.display = 'block';
+                jsonHint.style.color = 'var(--success-color, #10b981)';
+                jsonHint.textContent = '✓ 已从账号自动填充';
+            }
+        }
+    }
+
+    function renderAccountSelect(accounts) {
+        const wrapper = modal.querySelector('#asAccountInfoWrapper');
+        const hint = modal.querySelector('#asAccountHint');
+        const available = accounts.filter(a => !a.imported);
+        accountCredentialsMap = {};
+        accounts.forEach(a => { accountCredentialsMap[a.accountValue] = a; });
+
+        if (accounts.length === 0) {
+            wrapper.innerHTML = `<input type="text" id="asAccountInfo" class="form-control" placeholder="${t('afterSale.import.accountSelect') || '名称-密码'}">`;
+            hint.style.display = 'block';
+            hint.style.color = 'var(--danger-color, #ef4444)';
+            hint.textContent = t('afterSale.import.noAccounts') || '该订单无可用账号';
+            return;
+        }
+
+        if (available.length === 0) {
+            wrapper.innerHTML = `<input type="text" id="asAccountInfo" class="form-control" placeholder="${t('afterSale.import.accountSelect') || '名称-密码'}" disabled>`;
+            hint.style.display = 'block';
+            hint.style.color = 'var(--warning-color, #f59e0b)';
+            hint.textContent = t('afterSale.import.allImported') || '该订单所有账号已导入';
+            return;
+        }
+
+        const importedLabel = t('afterSale.import.imported') || '已导入';
+        let options = accounts.map(a => {
+            const label = a.imported ? `${a.displayName}（${importedLabel}）` : a.displayName;
+            const disabled = a.imported ? ' disabled' : '';
+            const selected = (!a.imported && !accounts.slice(0, accounts.indexOf(a)).some(x => !x.imported)) ? ' selected' : '';
+            return `<option value="${a.accountValue}"${disabled}${selected}>${label}</option>`;
+        }).join('');
+
+        wrapper.innerHTML = `<select id="asAccountInfo" class="form-control">${options}</select>`;
+        hint.style.display = 'none';
+
+        // 绑定 change 事件自动填充
+        const sel = wrapper.querySelector('#asAccountInfo');
+        sel.addEventListener('change', () => {
+            const acc = accountCredentialsMap[sel.value];
+            autoFillCredentials(acc);
+        });
+        // 首次自动填充默认选中的账号
+        const firstAvailable = available[0];
+        if (firstAvailable) autoFillCredentials(firstAvailable);
+    }
+
+    function fallbackToInput(errorMsg) {
+        const wrapper = modal.querySelector('#asAccountInfoWrapper');
+        const hint = modal.querySelector('#asAccountHint');
+        wrapper.innerHTML = `<input type="text" id="asAccountInfo" class="form-control" placeholder="${t('afterSale.import.accountSelect') || '名称-密码'}">`;
+        if (errorMsg) {
+            hint.style.display = 'block';
+            hint.style.color = 'var(--danger-color, #ef4444)';
+            hint.textContent = errorMsg;
+        } else {
+            hint.style.display = 'none';
+        }
+    }
+
+    async function fetchOrderAccounts(orderId) {
+        const hint = modal.querySelector('#asAccountHint');
+        hint.style.display = 'block';
+        hint.style.color = 'var(--text-secondary, #6b7280)';
+        hint.textContent = t('afterSale.import.loading') || '正在获取账号列表...';
+
+        try {
+            const resp = await window.apiClient.get(`/kiro/order-accounts?orderId=${orderId}`);
+            if (resp.success && Array.isArray(resp.accounts)) {
+                renderAccountSelect(resp.accounts);
+            } else {
+                fallbackToInput(resp.error || t('afterSale.import.fetchFailed'));
+            }
+        } catch (err) {
+            fallbackToInput(t('afterSale.import.fetchFailed') || '无法获取账号列表，请手动输入');
+        }
+    }
+
+    function onOrderIdChange() {
+        clearTimeout(asDebounceTimer);
+        const val = parseInt(orderIdInput.value);
+        if (!val || val <= 0) {
+            fallbackToInput(null);
+            return;
+        }
+        asDebounceTimer = setTimeout(() => fetchOrderAccounts(val), 500);
+    }
+
+    orderIdInput.addEventListener('input', onOrderIdChange);
+    orderIdInput.addEventListener('blur', onOrderIdChange);
+
     // --- JSON 解析 ---
     const jsonArea = modal.querySelector('#asAccountJson');
     const jsonHint = modal.querySelector('#asJsonHint');
-    let parsedJsonData = null;
 
     jsonArea.addEventListener('input', () => {
         parsedJsonData = null;
@@ -2833,8 +2959,22 @@ function showAfterSaleImportModal() {
         }
     });
 
+    // --- 取消按钮 ---
+    modal.querySelector('#asCancelBtn').addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        modal.remove();
+    });
+
     // --- 提交 ---
-    modal.querySelector('#asSubmitBtn').addEventListener('click', async () => {
+    modal.querySelector('#asSubmitBtn').addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // 防御：如果弹窗已被移除（如取消按钮触发），不执行导入
+        if (!document.body.contains(modal)) return;
+
         const orderId = parseInt(modal.querySelector('#asOrderId').value);
         const accountInfo = modal.querySelector('#asAccountInfo').value.trim();
         const resultDiv = modal.querySelector('#asResult');
@@ -2858,7 +2998,7 @@ function showAfterSaleImportModal() {
             clientId = modal.querySelector('#asClientId').value.trim();
             clientSecret = modal.querySelector('#asClientSecret').value.trim();
             refreshToken = modal.querySelector('#asRefreshToken').value.trim();
-            region = modal.querySelector('#asRegion').value.trim();
+            region = '';
             startUrl = modal.querySelector('#asStartUrl').value.trim();
         }
 
@@ -2888,9 +3028,27 @@ function showAfterSaleImportModal() {
             resultDiv.innerHTML = `<div class="alert alert-success">${t('afterSale.import.success')}<br>UUID: ${resp.provider?.uuid || ''}</div>`;
             showToast(t('common.success'), t('afterSale.import.success'), 'success');
             loadProviders();
+            loadConfigList();
+            // 刷新订单账号列表，标记已导入状态
+            const currentOrderId = parseInt(modal.querySelector('#asOrderId').value);
+            if (currentOrderId > 0) {
+                fetchOrderAccounts(currentOrderId);
+            }
+            // 刷新右侧管理面板（如果当前打开的是 claude-kiro-oauth）
+            const openModal = document.querySelector('.provider-modal[data-provider-type="claude-kiro-oauth"]');
+            if (openModal) {
+                openProviderManager('claude-kiro-oauth');
+            }
         } catch (error) {
             resultDiv.style.display = 'block';
-            resultDiv.innerHTML = `<div class="alert alert-danger">${error.message || 'Import failed'}</div>`;        } finally {
+            // 区分 HTTP 状态码错误和其他错误，给出更友好的提示
+            const errMsg = error.message || 'Import failed';
+            if (errMsg.startsWith('HTTP ')) {
+                resultDiv.innerHTML = `<div class="alert alert-danger">${t('afterSale.import.httpError') || '请求失败'}: ${errMsg}，${t('afterSale.import.checkAndRetry') || '请检查参数后重试'}</div>`;
+            } else {
+                resultDiv.innerHTML = `<div class="alert alert-danger">${errMsg}</div>`;
+            }
+        } finally {
             submitBtn.disabled = false;
             submitBtn.innerHTML = `<i class="fas fa-upload"></i> ${t('afterSale.import.submit')}`;
         }
@@ -2903,6 +3061,73 @@ function showAfterSaleImportModal() {
 }
 
 window.showAfterSaleImportModal = showAfterSaleImportModal;
+
+window.checkBanStatus = async function(providerType, uuid, event) {
+    const btn = event.currentTarget;
+    const originalIcon = btn.querySelector('i').className;
+
+    btn.disabled = true;
+    btn.querySelector('i').className = 'fa-solid fa-spinner fa-spin';
+
+    try {
+        const response = await window.apiClient.post(
+            `/providers/${encodeURIComponent(providerType)}/${uuid}/check-ban`
+        );
+
+        if (response.success) {
+            if (response.is_banned === true) {
+                showToast(t('common.warning'), t('provider.banCheck.banned'), 'warning');
+            } else if (response.is_banned === false) {
+                showToast(t('common.success'), t('provider.banCheck.notBanned'), 'success');
+            } else {
+                showToast(t('common.warning'), t('provider.banCheck.notFound'), 'warning');
+            }
+        } else {
+            showToast(t('common.error'), t('provider.banCheck.failed') + ': ' + (response.message || ''), 'error');
+        }
+    } catch (error) {
+        showToast(t('common.error'), t('provider.networkError'), 'error');
+    } finally {
+        if (btn.isConnected) {
+            btn.disabled = false;
+            btn.querySelector('i').className = originalIcon;
+        }
+    }
+};
+
+window.replaceBannedAccount = async function(providerType, uuid, event) {
+    if (!confirm(t('provider.replaceConfirm'))) return;
+
+    const btn = event.currentTarget;
+    const originalIcon = btn.querySelector('i').className;
+
+    btn.disabled = true;
+    btn.querySelector('i').className = 'fa-solid fa-spinner fa-spin';
+
+    try {
+        const response = await window.apiClient.post(
+            `/providers/${encodeURIComponent(providerType)}/${uuid}/replace-banned`
+        );
+
+        if (response.success) {
+            showToast(t('common.success'), t('provider.replace.success'), 'success');
+            loadProviders();
+        } else {
+            showToast(t('common.error'), response.message || t('provider.replace.failed'), 'error');
+        }
+    } catch (error) {
+        if (error.message && error.message.startsWith('HTTP 409')) {
+            showToast(t('common.warning'), t('provider.replace.inProgress'), 'warning');
+        } else {
+            showToast(t('common.error'), t('provider.networkError'), 'error');
+        }
+    } finally {
+        if (btn.isConnected) {
+            btn.disabled = false;
+            btn.querySelector('i').className = originalIcon;
+        }
+    }
+};
 
 export {
     loadSystemInfo,

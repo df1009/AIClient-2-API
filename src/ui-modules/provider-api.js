@@ -1071,3 +1071,245 @@ export async function handleRefreshProviderUuid(req, res, currentConfig, provide
         return true;
     }
 }
+
+export async function handleCheckBan(req, res, currentConfig, providerPoolManager, providerType, providerUuid) {
+    try {
+        const pool = providerPoolManager.providerPools[providerType] || [];
+        const provider = pool.find(p => p.uuid === providerUuid);
+        if (!provider) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: 'Provider not found' }));
+            return true;
+        }
+
+        const meta = provider.afterSaleMeta;
+        if (!meta?.orderId || !meta?.deliveryId) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: '缺少售后元数据' }));
+            return true;
+        }
+
+        const shopClient = providerPoolManager._getShopClient();
+        if (!shopClient) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: '售后商城凭据未配置' }));
+            return true;
+        }
+
+        const result = await shopClient.checkBan(meta.orderId, meta.deliveryId);
+        const match = result.results?.find(r => r.account_id === meta.accountId);
+
+        if (match) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: true,
+                is_banned: match.is_banned,
+                account_id: match.account_id,
+                email: match.email,
+                checked_at: match.checked_at
+            }));
+            return true;
+        } else {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, is_banned: null, message: '未匹配到当前账号' }));
+            return true;
+        }
+    } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: error.message }));
+        return true;
+    }
+}
+
+export async function handleReplaceBanned(req, res, currentConfig, providerPoolManager, providerType, providerUuid) {
+    try {
+        const pool = providerPoolManager.providerPools[providerType] || [];
+        const provider = pool.find(p => p.uuid === providerUuid);
+        if (!provider) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: 'Provider not found' }));
+            return true;
+        }
+
+        const meta = provider.afterSaleMeta;
+        if (!meta?.orderId || !meta?.deliveryId || !meta?.accountId) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: '缺少售后元数据' }));
+            return true;
+        }
+
+        if (provider.isReplaced) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: '该节点已换号，请勿重复操作' }));
+            return true;
+        }
+
+        if (!providerPoolManager.replacingUuids) {
+            providerPoolManager.replacingUuids = new Set();
+        }
+        if (providerPoolManager.replacingUuids.has(providerUuid)) {
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: '该节点正在换号中，请稍后再试' }));
+            return true;
+        }
+
+        providerPoolManager.replacingUuids.add(providerUuid);
+        try {
+            const shopClient = providerPoolManager._getShopClient();
+            if (!shopClient) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, message: '售后商城凭据未配置' }));
+                return true;
+            }
+
+            const replaceResult = await shopClient.replaceBanned(meta.orderId, meta.deliveryId, meta.accountId);
+
+            if (!replaceResult.success || !replaceResult.new_account) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, message: replaceResult.message || '换号失败' }));
+                return true;
+            }
+
+            try {
+                await providerPoolManager._applyNewAccount(providerType, provider, replaceResult.new_account);
+            } catch (applyError) {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, message: '换号成功但新账号导入失败，请手动处理: ' + applyError.message }));
+                return true;
+            }
+
+            const newPool = providerPoolManager.providerPools[providerType] || [];
+            const newProvider = newPool.find(p =>
+                p.afterSaleMeta?.accountId === replaceResult.new_account.id && p.uuid !== providerUuid
+            );
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, new_uuid: newProvider?.uuid, old_uuid: providerUuid, message: '换号成功' }));
+            return true;
+
+        } finally {
+            providerPoolManager.replacingUuids.delete(providerUuid);
+        }
+    } catch (error) {
+        if (error.response?.status === 400) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: error.response?.data?.message || error.message }));
+            return true;
+        }
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: error.message }));
+        return true;
+    }
+}
+
+/**
+ * 设置/添加标签
+ */
+export async function handleSetTags(req, res, currentConfig, providerPoolManager, providerType, providerUuid) {
+    try {
+        const pool = providerPoolManager.providerPools[providerType] || [];
+        const provider = pool.find(p => p.uuid === providerUuid);
+        if (!provider) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: 'Provider not found' }));
+            return true;
+        }
+
+        const body = await getRequestBody(req);
+        const method = req.method;
+
+        if (!Array.isArray(provider.tags)) {
+            provider.tags = [];
+        }
+
+        if (method === 'PUT') {
+            // 替换全部标签
+            const { tags } = body;
+            if (!Array.isArray(tags)) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, message: 'tags must be an array' }));
+                return true;
+            }
+            const cleaned = [...new Set(
+                tags.filter(t => typeof t === 'string' && t.trim())
+                    .map(t => t.trim().slice(0, 50))
+            )].slice(0, 20);
+            provider.tags = cleaned;
+        } else if (method === 'POST') {
+            // 添加单个标签
+            const { tag } = body;
+            if (!tag || typeof tag !== 'string' || !tag.trim()) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, message: 'tag must be a non-empty string' }));
+                return true;
+            }
+            const trimmed = tag.trim().slice(0, 50);
+            if (provider.tags.includes(trimmed)) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, message: 'Tag already exists' }));
+                return true;
+            }
+            if (provider.tags.length >= 20) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, message: 'Maximum 20 tags allowed' }));
+                return true;
+            }
+            provider.tags.push(trimmed);
+        }
+
+        // 同步内存中的 providerStatus
+        const statusPool = providerPoolManager.providerStatus[providerType] || [];
+        const ps = statusPool.find(s => s.config.uuid === providerUuid);
+        if (ps) {
+            ps.config.tags = provider.tags;
+        }
+
+        providerPoolManager._debouncedSave(providerType);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, tags: provider.tags }));
+        return true;
+    } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: error.message }));
+        return true;
+    }
+}
+
+/**
+ * 删除指定标签
+ */
+export async function handleDeleteTag(req, res, currentConfig, providerPoolManager, providerType, providerUuid, tagName) {
+    try {
+        const pool = providerPoolManager.providerPools[providerType] || [];
+        const provider = pool.find(p => p.uuid === providerUuid);
+        if (!provider) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: 'Provider not found' }));
+            return true;
+        }
+
+        if (!Array.isArray(provider.tags)) {
+            provider.tags = [];
+        }
+
+        provider.tags = provider.tags.filter(t => t !== tagName);
+
+        // 同步内存中的 providerStatus
+        const statusPool = providerPoolManager.providerStatus[providerType] || [];
+        const ps = statusPool.find(s => s.config.uuid === providerUuid);
+        if (ps) {
+            ps.config.tags = provider.tags;
+        }
+
+        providerPoolManager._debouncedSave(providerType);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, tags: provider.tags }));
+        return true;
+    } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: error.message }));
+        return true;
+    }
+}

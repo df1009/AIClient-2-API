@@ -1456,3 +1456,12 @@
 [data-theme="dark"] .highlight-note i {
     color: var(--warning-color);
 }
+
+/* 已换号节点样式 */
+.provider-item-detail.replaced {
+    opacity: 0.7;
+    border-left: 3px solid #f59e0b;
+}
+.provider-item-detail.replaced .provider-item-header {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.05), transparent);
+}

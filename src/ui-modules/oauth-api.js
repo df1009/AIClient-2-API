@@ -1,5 +1,7 @@
 import { promises as fsPromises } from 'fs';
+import path from 'path';
 import { getRequestBody } from '../utils/common.js';
+import { pathsEqual } from '../utils/provider-utils.js';
 import logger from '../utils/logger.js';
 import {
     handleGeminiCliOAuth,
@@ -608,26 +610,81 @@ export async function handleImportAfterSaleCredentials(req, res) {
         }
 
         const deliveryId = orderData.deliveries[0].id;
-        const matchedAccount = orderData.deliveries[0].account_data?.find(
-            acc => acc.account_info === accountInfo
-        );
+        const accountDataArr = orderData.deliveries[0].account_data || [];
+
+        // 新匹配逻辑：解析 accountInfo（"名称-密码"）匹配 subscription_info
+        let matchedAccount = null;
+        const dashIdx = accountInfo.indexOf('-');
+        if (dashIdx > 0) {
+            const inputName = accountInfo.substring(0, dashIdx);
+            const inputPwd = accountInfo.substring(dashIdx + 1);
+            matchedAccount = accountDataArr.find(acc => {
+                const parsed = parseSubscriptionInfo(acc.subscription_info);
+                return parsed && parsed.name === inputName && parsed.password === inputPwd;
+            });
+        }
+        // fallback：subscription_info 匹配失败，尝试 account_info 精确匹配
+        if (!matchedAccount) {
+            matchedAccount = accountDataArr.find(acc => acc.account_info === accountInfo);
+        }
         if (!matchedAccount) {
             return sendError(400, '未在订单中找到匹配的账号（accountInfo 不匹配）');
         }
         const accountId = matchedAccount.id;
 
-        // 3. 调用 importAwsCredentials 创建 provider 节点
-        const importResult = await importAwsCredentials({
-            clientId: clientId.trim(),
-            clientSecret: clientSecret.trim(),
-            accessToken: refreshToken.trim(),
-            refreshToken: refreshToken.trim(),
-            authMethod: 'builder-id',
-            startUrl: startUrl || ''
-        });
+        // 重复导入防御：检查 provider_pools 中是否已存在相同 orderId + accountId 且未过期
+        try {
+            const poolsCheckPath = CONFIG.PROVIDER_POOLS_FILE_PATH || 'configs/provider_pools.json';
+            const poolsCheckRaw = await fsPromises.readFile(poolsCheckPath, 'utf8');
+            const poolsCheckData = JSON.parse(poolsCheckRaw);
+            const kiroPoolCheck = poolsCheckData['claude-kiro-oauth'] || [];
+            const duplicate = kiroPoolCheck.find(p => {
+                const m = p.afterSaleMeta;
+                return m && m.orderId === orderId && m.accountId === accountId && !m.afterSaleExpired;
+            });
+            if (duplicate) {
+                return sendError(400, `该账号已导入（uuid: ${duplicate.uuid}），请勿重复导入`);
+            }
+        } catch (e) {
+            logger.warn('[AfterSale] Duplicate check failed, proceeding:', e.message);
+        }
 
-        if (!importResult.success) {
-            return sendError(500, `AWS 凭据导入失败: ${importResult.error}`);
+        // 3. 调用 importAwsCredentials 创建 provider 节点（region 重试，和封号换号逻辑一致）
+        const configRegions = CONFIG.AUTO_AFTER_SALE_REGIONS;
+        const regions = (Array.isArray(configRegions) && configRegions.length > 0)
+            ? configRegions
+            : ["us-east-1", "eu-north-1"];
+
+        let importResult = null;
+        let successRegion = null;
+
+        for (const tryRegion of regions) {
+            logger.info(`[AfterSale] Trying import with region ${tryRegion} (${regions.indexOf(tryRegion) + 1}/${regions.length})`);
+            importResult = await importAwsCredentials({
+                clientId: clientId.trim(),
+                clientSecret: clientSecret.trim(),
+                accessToken: refreshToken.trim(),
+                refreshToken: refreshToken.trim(),
+                authMethod: 'builder-id',
+                startUrl: startUrl || '',
+                region: tryRegion,
+                idcRegion: tryRegion,
+                failOnRefreshError: CONFIG.AUTO_AFTER_SALE_FAIL_ON_REFRESH_ERROR !== false
+            });
+
+            if (importResult.success) {
+                successRegion = tryRegion;
+                break;
+            }
+            // 重复凭据直接跳出，不用尝试其他 region
+            if (importResult.error === 'duplicate') {
+                return sendError(409, '该凭据已导入（refreshToken 重复），请勿重复导入');
+            }
+            logger.warn(`[AfterSale] Import failed with region ${tryRegion}: ${importResult.error}`);
+        }
+
+        if (!importResult || !importResult.success) {
+            return sendError(500, `AWS 凭据导入失败（已尝试 ${regions.join(', ')}）: ${importResult?.error || 'unknown'}`);
         }
 
         // 4. 追加 importSource + afterSaleMeta 到新节点（两步操作）
@@ -638,11 +695,21 @@ export async function handleImportAfterSaleCredentials(req, res) {
 
         const newNode = kiroPool.find(p =>
             p.KIRO_OAUTH_CREDS_FILE_PATH === importResult.path ||
-            p.KIRO_OAUTH_CREDS_FILE_PATH === './' + importResult.path
+            p.KIRO_OAUTH_CREDS_FILE_PATH === './' + importResult.path ||
+            pathsEqual(p.KIRO_OAUTH_CREDS_FILE_PATH, importResult.path)
         );
 
         if (!newNode) {
-            return sendError(500, '导入成功但未找到新创建的 provider 节点');
+            // 导入已成功（凭据文件已创建并关联到 pool），只是无法追加 afterSaleMeta
+            // 返回 200 + warning 而非 500，避免前端误报失败
+            logger.warn(`[AfterSale] Import succeeded but could not locate new node for path: ${importResult.path}`);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: true,
+                warning: '导入成功但未能追加售后元数据，请手动检查',
+                provider: { uuid: null, importSource: 'auto-after-sale' }
+            }));
+            return true;
         }
 
         newNode.importSource = 'auto-after-sale';
@@ -651,6 +718,7 @@ export async function handleImportAfterSaleCredentials(req, res) {
             deliveryId,
             accountId,
             accountInfo,
+            subscriptionInfoRaw: matchedAccount.subscription_info || '',
             startUrl: startUrl || '',
             afterSaleExpired: false
         };
@@ -690,6 +758,169 @@ export async function handleImportAfterSaleCredentials(req, res) {
 
     } catch (error) {
         logger.error('[AfterSale] Import error:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: error.message }));
+        return true;
+    }
+}
+
+/**
+ * 解析 subscription_info 为 "名称-密码" 格式
+ * 格式：积分----链接----名称----密码----MFA密钥（---- 分隔 5 段）
+ * @returns {{ name: string, password: string, raw: string } | null}
+ */
+function parseSubscriptionInfo(subscriptionInfo) {
+    if (!subscriptionInfo || typeof subscriptionInfo !== 'string') return null;
+    const parts = subscriptionInfo.split('----');
+    if (parts.length < 4) return null;
+    const name = parts[2]?.trim();
+    const password = parts[3]?.trim();
+    if (!name || !password) return null;
+    return { name, password, raw: subscriptionInfo };
+}
+
+/**
+ * 获取订单账号列表
+ * GET /api/kiro/order-accounts?orderId={orderId}
+ */
+export async function handleGetOrderAccounts(req, res) {
+    const sendError = (status, message) => {
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: message }));
+        return true;
+    };
+
+    try {
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        const orderId = parseInt(url.searchParams.get('orderId'));
+
+        if (!orderId || !Number.isInteger(orderId) || orderId <= 0) {
+            return sendError(400, 'orderId 必须为正整数');
+        }
+
+        const { CONFIG } = await import('../core/config-manager.js');
+        const { AfterSaleShopClient } = await import('../auth/after-sale-shop-client.js');
+
+        const shopBaseUrl = CONFIG.AUTO_AFTER_SALE_SHOP_BASE_URL || 'https://kiroshop.xyz';
+        const shopEmail = CONFIG.AUTO_AFTER_SALE_SHOP_EMAIL;
+        const shopPassword = CONFIG.AUTO_AFTER_SALE_SHOP_PASSWORD;
+
+        if (!shopEmail || !shopPassword) {
+            return sendError(400, '请先在配置中填写商城邮箱和密码');
+        }
+
+        const shopClient = new AfterSaleShopClient(shopBaseUrl, shopEmail, shopPassword);
+
+        let orderData;
+        try {
+            orderData = await shopClient.getOrderDetail(orderId);
+        } catch (err) {
+            return sendError(500, `商城 API 调用失败: ${err.message}`);
+        }
+
+        if (!orderData.deliveries || orderData.deliveries.length === 0) {
+            return sendError(400, '该订单无交付记录');
+        }
+
+        const delivery = orderData.deliveries[0];
+        const deliveryId = delivery.id;
+        const accountDataArr = delivery.account_data || [];
+
+        // 读取 provider_pools 检查已导入状态
+        const poolsFilePath = CONFIG.PROVIDER_POOLS_FILE_PATH || 'configs/provider_pools.json';
+        let importedSet = new Set();
+        try {
+            const poolsRaw = await fsPromises.readFile(poolsFilePath, 'utf8');
+            const poolsData = JSON.parse(poolsRaw);
+            const kiroPool = poolsData['claude-kiro-oauth'] || [];
+            for (const p of kiroPool) {
+                const meta = p.afterSaleMeta;
+                if (meta && meta.orderId === orderId && meta.accountId && !meta.afterSaleExpired) {
+                    importedSet.add(meta.accountId);
+                }
+            }
+        } catch (e) {
+            logger.warn('[OrderAccounts] Failed to read provider_pools for import check:', e.message);
+        }
+
+        const accounts = accountDataArr.map(acc => {
+            const parsed = parseSubscriptionInfo(acc.subscription_info);
+            let displayName, accountValue;
+            if (parsed) {
+                displayName = `${parsed.name}-${parsed.password}`;
+                accountValue = displayName;
+            } else {
+                displayName = acc.account_info ? `${acc.account_info}（格式异常）` : `账号#${acc.id}（格式异常）`;
+                accountValue = acc.account_info || '';
+            }
+
+            // 解析凭据：优先 account_json，fallback account_info
+            let clientId = '', clientSecret = '', refreshToken = '';
+            if (acc.account_json) {
+                try {
+                    let jsonArr = typeof acc.account_json === 'string' ? JSON.parse(acc.account_json) : acc.account_json;
+                    const obj = Array.isArray(jsonArr) ? jsonArr[0] : jsonArr;
+                    if (obj) {
+                        clientId = obj.clientId || '';
+                        clientSecret = obj.clientSecret || '';
+                        refreshToken = obj.refreshToken || '';
+                    }
+                } catch (e) {
+                    logger.warn('[OrderAccounts] account_json parse failed:', e.message);
+                }
+            }
+            if (!clientId && acc.account_info) {
+                const infoParts = acc.account_info.split('----');
+                if (infoParts.length >= 6) {
+                    refreshToken = refreshToken || (infoParts[3]?.trim() || '');
+                    clientId = infoParts[4]?.trim() || '';
+                    clientSecret = infoParts[5]?.trim() || '';
+                }
+            }
+            // 也可从顶层字段 fallback
+            clientId = clientId || acc.client_id || '';
+            clientSecret = clientSecret || acc.client_secret || '';
+            refreshToken = refreshToken || acc.refresh_token || '';
+
+            // startUrl 从 subscription_info 第2段
+            let startUrl = acc.subscription_url || '';
+            if (!startUrl && acc.subscription_info) {
+                const subParts = acc.subscription_info.split('----');
+                if (subParts.length >= 2) startUrl = subParts[1]?.trim() || '';
+            }
+
+            // region 从 account_json 解析
+            let region = '';
+            if (acc.account_json) {
+                try {
+                    let jsonArr = typeof acc.account_json === 'string' ? JSON.parse(acc.account_json) : acc.account_json;
+                    const obj = Array.isArray(jsonArr) ? jsonArr[0] : jsonArr;
+                    if (obj) {
+                        region = obj.region || obj.idcRegion || '';
+                    }
+                } catch (e) { /* ignore */ }
+            }
+
+            return {
+                accountId: acc.id,
+                deliveryId,
+                displayName,
+                accountValue,
+                imported: importedSet.has(acc.id),
+                clientId,
+                clientSecret,
+                refreshToken,
+                startUrl,
+                region
+            };
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, accounts }));
+        return true;
+
+    } catch (error) {
+        logger.error('[OrderAccounts] Error:', error);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: error.message }));
         return true;

@@ -118,7 +118,11 @@ export async function handleUpdateConfig(req, res, currentConfig, providerPoolMa
         if (newConfig.AUTO_AFTER_SALE_SHOP_BASE_URL !== undefined) currentConfig.AUTO_AFTER_SALE_SHOP_BASE_URL = newConfig.AUTO_AFTER_SALE_SHOP_BASE_URL;
         if (newConfig.AUTO_AFTER_SALE_SHOP_EMAIL !== undefined) currentConfig.AUTO_AFTER_SALE_SHOP_EMAIL = newConfig.AUTO_AFTER_SALE_SHOP_EMAIL;
         if (newConfig.AUTO_AFTER_SALE_SHOP_PASSWORD !== undefined) currentConfig.AUTO_AFTER_SALE_SHOP_PASSWORD = newConfig.AUTO_AFTER_SALE_SHOP_PASSWORD;
-        if (newConfig.AUTO_AFTER_SALE_REGION !== undefined) currentConfig.AUTO_AFTER_SALE_REGION = newConfig.AUTO_AFTER_SALE_REGION;
+        if (newConfig.AUTO_AFTER_SALE_REGIONS !== undefined) currentConfig.AUTO_AFTER_SALE_REGIONS = newConfig.AUTO_AFTER_SALE_REGIONS;
+        if (newConfig.AUTO_AFTER_SALE_FAIL_ON_REFRESH_ERROR !== undefined) currentConfig.AUTO_AFTER_SALE_FAIL_ON_REFRESH_ERROR = newConfig.AUTO_AFTER_SALE_FAIL_ON_REFRESH_ERROR;
+        if (newConfig.AUTO_AFTER_SALE_AUTO_TAG_ENABLED !== undefined) currentConfig.AUTO_AFTER_SALE_AUTO_TAG_ENABLED = newConfig.AUTO_AFTER_SALE_AUTO_TAG_ENABLED;
+        if (newConfig.AUTO_AFTER_SALE_AUTO_TAG_DELAY !== undefined) currentConfig.AUTO_AFTER_SALE_AUTO_TAG_DELAY = newConfig.AUTO_AFTER_SALE_AUTO_TAG_DELAY;
+        if (newConfig.AUTO_AFTER_SALE_AUTO_TAG_TAGS !== undefined) currentConfig.AUTO_AFTER_SALE_AUTO_TAG_TAGS = newConfig.AUTO_AFTER_SALE_AUTO_TAG_TAGS;
 
         // 数值范围校验
         if (currentConfig.AUTO_AFTER_SALE_INTERVAL !== undefined && currentConfig.AUTO_AFTER_SALE_INTERVAL < 30000) {
@@ -135,6 +139,11 @@ export async function handleUpdateConfig(req, res, currentConfig, providerPoolMa
             (currentConfig.AUTO_AFTER_SALE_MAX_URGENT_RETRIES < 1 || currentConfig.AUTO_AFTER_SALE_MAX_URGENT_RETRIES > 999)) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: { message: 'AUTO_AFTER_SALE_MAX_URGENT_RETRIES must be between 1 and 999' } }));
+            return true;
+        }
+        if (currentConfig.AUTO_AFTER_SALE_AUTO_TAG_DELAY !== undefined && currentConfig.AUTO_AFTER_SALE_AUTO_TAG_DELAY < 0) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: { message: 'AUTO_AFTER_SALE_AUTO_TAG_DELAY must be >= 0' } }));
             return true;
         }
 
@@ -203,7 +212,11 @@ export async function handleUpdateConfig(req, res, currentConfig, providerPoolMa
                 AUTO_AFTER_SALE_SHOP_BASE_URL: currentConfig.AUTO_AFTER_SALE_SHOP_BASE_URL,
                 AUTO_AFTER_SALE_SHOP_EMAIL: currentConfig.AUTO_AFTER_SALE_SHOP_EMAIL,
                 AUTO_AFTER_SALE_SHOP_PASSWORD: currentConfig.AUTO_AFTER_SALE_SHOP_PASSWORD,
-                AUTO_AFTER_SALE_REGION: currentConfig.AUTO_AFTER_SALE_REGION
+                AUTO_AFTER_SALE_REGIONS: currentConfig.AUTO_AFTER_SALE_REGIONS,
+                AUTO_AFTER_SALE_FAIL_ON_REFRESH_ERROR: currentConfig.AUTO_AFTER_SALE_FAIL_ON_REFRESH_ERROR,
+                AUTO_AFTER_SALE_AUTO_TAG_ENABLED: currentConfig.AUTO_AFTER_SALE_AUTO_TAG_ENABLED ?? false,
+                AUTO_AFTER_SALE_AUTO_TAG_DELAY: currentConfig.AUTO_AFTER_SALE_AUTO_TAG_DELAY ?? 5000,
+                AUTO_AFTER_SALE_AUTO_TAG_TAGS: currentConfig.AUTO_AFTER_SALE_AUTO_TAG_TAGS ?? []
             };
 
             writeFileSync(configPath, JSON.stringify(configToSave, null, 2), 'utf-8');

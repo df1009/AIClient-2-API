@@ -396,11 +396,37 @@ function renderProviderList(providers) {
             }
         }
 
+        // 已换号标记
+        let replacedBadgeHtml = '';
+        if (provider.isReplaced) {
+            const replacedTime = provider.replacedAt ? new Date(provider.replacedAt).toLocaleString() : '';
+            replacedBadgeHtml = `<span class="badge badge-replaced" style="margin-left:6px;font-size:11px;padding:1px 6px;border-radius:3px;background:#f59e0b;color:#fff;" title="换号时间: ${replacedTime}">已换号</span>`;
+            if (provider.replacedByUuid) {
+                replacedBadgeHtml += `<span class="badge badge-replaced-link" style="margin-left:4px;font-size:11px;padding:1px 6px;border-radius:3px;background:#d97706;color:#fff;cursor:pointer;" onclick="event.stopPropagation();window.scrollToProvider&&window.scrollToProvider('${provider.replacedByUuid}')" title="点击跳转到新节点">→ ${provider.replacedByUuid.substring(0,8)}...</span>`;
+            }
+        }
+
+        // 换号来源标记
+        let replacedFromHtml = '';
+        if (provider.replacedFromUuid) {
+            replacedFromHtml = `<span class="badge badge-replaced-from" style="margin-left:6px;font-size:11px;padding:1px 6px;border-radius:3px;background:#3b82f6;color:#fff;cursor:pointer;" onclick="event.stopPropagation();window.scrollToProvider&&window.scrollToProvider('${provider.replacedFromUuid}')" title="点击跳转到旧节点">← 由 ${provider.replacedFromUuid.substring(0,8)}... 换号</span>`;
+        }
+
+        // 标签展示
+        let tagsHtml = '';
+        if (provider.tags && provider.tags.length > 0) {
+            tagsHtml = provider.tags.map(tag => 
+                `<span class="badge badge-tag" style="margin-left:4px;font-size:11px;padding:1px 6px;border-radius:3px;background:#10b981;color:#fff;">${tag}</span>`
+            ).join('');
+        }
+
+        const replacedClass = provider.isReplaced ? 'replaced' : '';
+
         return `
-            <div class="provider-item-detail ${healthClass} ${disabledClass}" data-uuid="${provider.uuid}">
+            <div class="provider-item-detail ${healthClass} ${disabledClass} ${replacedClass}" data-uuid="${provider.uuid}">
                 <div class="provider-item-header" onclick="window.toggleProviderDetails('${provider.uuid}')">
                     <div class="provider-info">
-                        <div class="provider-name">${provider.customName || provider.uuid}${afterSaleBadgeHtml}</div>
+                        <div class="provider-name">${provider.customName || provider.uuid}${afterSaleBadgeHtml}${replacedBadgeHtml}${replacedFromHtml}${tagsHtml}</div>
                         <div class="provider-meta">
                             <span class="health-status">
                                 <i class="${healthIcon}"></i>
@@ -428,7 +454,7 @@ function renderProviderList(providers) {
                         ${errorInfoHtml}
                     </div>
                     <div class="provider-actions-group">
-                        <button class="btn-small ${toggleButtonClass}" onclick="window.toggleProviderStatus('${provider.uuid}', event)" title="${toggleButtonText}此提供商">
+                        <button class="btn-small ${toggleButtonClass}" onclick="window.toggleProviderStatus('${provider.uuid}', event)" title="${toggleButtonText}此提供商" ${provider.isReplaced ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
                             <i class="${toggleButtonIcon}"></i> ${toggleButtonText}
                         </button>
                         <button class="btn-small btn-edit" onclick="window.editProvider('${provider.uuid}', event)">
@@ -440,6 +466,16 @@ function renderProviderList(providers) {
                         <button class="btn-small btn-refresh-uuid" onclick="window.refreshProviderUuid('${provider.uuid}', event)" title="${t('modal.provider.refreshUuid')}">
                             <i class="fas fa-sync-alt"></i>
                         </button>
+                        ${(provider.importSource === 'auto-after-sale' && provider.afterSaleMeta?.orderId && provider.afterSaleMeta?.deliveryId) ? `
+                        <button class="btn-small btn-info" onclick="window.checkBanStatus('${currentProviderType}', '${provider.uuid}', event)" title="${t('provider.checkBan')}">
+                            <i class="fa-solid fa-shield-halved"></i> ${t('provider.checkBan')}
+                        </button>
+                        <button class="btn-small btn-warning" onclick="window.replaceBannedAccount('${currentProviderType}', '${provider.uuid}', event)"
+                            ${provider.afterSaleMeta?.afterSaleExpired ? `title="${t('provider.afterSaleExpiredTooltip')}"` : `title="${t('provider.replaceBanned')}"`}
+                            ${provider.isReplaced ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+                            <i class="fa-solid fa-rotate"></i> ${t('provider.replaceBanned')}
+                        </button>
+                        ` : ''}
                     </div>
                 </div>
                 <div class="provider-item-content" id="content-${provider.uuid}">

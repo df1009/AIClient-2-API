@@ -123,6 +123,24 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
         return await providerApi.handleGetProviders(req, res, currentConfig, providerPoolManager);
     }
 
+    // Provider stats
+    if (method === 'GET' && pathParam === '/api/providers/stats') {
+        // 汇总所有 provider types 的统计
+        const allStats = { total: 0, healthy: 0, unhealthy: 0, disabled: 0, replaced: 0, byType: {} };
+        for (const providerType of Object.keys(providerPoolManager.providerStatus || {})) {
+            const typeStats = providerPoolManager.getProviderStats(providerType);
+            allStats.byType[providerType] = typeStats;
+            allStats.total += typeStats.total;
+            allStats.healthy += typeStats.healthy;
+            allStats.unhealthy += typeStats.unhealthy;
+            allStats.disabled += typeStats.disabled;
+            allStats.replaced += typeStats.replaced;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(allStats));
+        return;
+    }
+
     // Get specific provider type details
     const providerTypeMatch = pathParam.match(/^\/api\/providers\/([^\/]+)$/);
     if (method === 'GET' && providerTypeMatch) {
@@ -194,6 +212,39 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
         const providerType = decodeURIComponent(refreshUuidMatch[1]);
         const providerUuid = refreshUuidMatch[2];
         return await providerApi.handleRefreshProviderUuid(req, res, currentConfig, providerPoolManager, providerType, providerUuid);
+    }
+
+    // Check ban status for specific provider
+    const checkBanMatch = pathParam.match(/^\/api\/providers\/([^\/]+)\/([^\/]+)\/check-ban$/);
+    if (method === 'POST' && checkBanMatch) {
+        const providerType = decodeURIComponent(checkBanMatch[1]);
+        const providerUuid = checkBanMatch[2];
+        return await providerApi.handleCheckBan(req, res, currentConfig, providerPoolManager, providerType, providerUuid);
+    }
+
+    // Replace banned account for specific provider
+    const replaceBannedMatch = pathParam.match(/^\/api\/providers\/([^\/]+)\/([^\/]+)\/replace-banned$/);
+    if (method === 'POST' && replaceBannedMatch) {
+        const providerType = decodeURIComponent(replaceBannedMatch[1]);
+        const providerUuid = replaceBannedMatch[2];
+        return await providerApi.handleReplaceBanned(req, res, currentConfig, providerPoolManager, providerType, providerUuid);
+    }
+
+    // Set/Add tags for specific provider
+    const tagsMatch = pathParam.match(/^\/api\/providers\/([^\/]+)\/([^\/]+)\/tags$/);
+    if ((method === 'PUT' || method === 'POST') && tagsMatch) {
+        const providerType = decodeURIComponent(tagsMatch[1]);
+        const providerUuid = tagsMatch[2];
+        return await providerApi.handleSetTags(req, res, currentConfig, providerPoolManager, providerType, providerUuid);
+    }
+
+    // Delete specific tag for provider
+    const deleteTagMatch = pathParam.match(/^\/api\/providers\/([^\/]+)\/([^\/]+)\/tags\/(.+)$/);
+    if (method === 'DELETE' && deleteTagMatch) {
+        const providerType = decodeURIComponent(deleteTagMatch[1]);
+        const providerUuid = deleteTagMatch[2];
+        const tagName = decodeURIComponent(deleteTagMatch[3]);
+        return await providerApi.handleDeleteTag(req, res, currentConfig, providerPoolManager, providerType, providerUuid, tagName);
     }
 
     // Update specific provider configuration
@@ -322,6 +373,11 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
     // Import after-sale credentials for Kiro (自动售后导入)
     if (method === 'POST' && pathParam === '/api/kiro/import-after-sale-credentials') {
         return await oauthApi.handleImportAfterSaleCredentials(req, res);
+    }
+
+    // Get order accounts for after-sale import (获取订单账号列表)
+    if (method === 'GET' && pathParam.startsWith('/api/kiro/order-accounts')) {
+        return await oauthApi.handleGetOrderAccounts(req, res);
     }
 
     // Get plugins list

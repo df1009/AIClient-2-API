@@ -91,7 +91,8 @@ export async function initializeConfig(args = process.argv.slice(2), configFileP
         AUTO_AFTER_SALE_SHOP_BASE_URL: "https://kiroshop.xyz",
         AUTO_AFTER_SALE_SHOP_EMAIL: "",
         AUTO_AFTER_SALE_SHOP_PASSWORD: "",
-        AUTO_AFTER_SALE_REGION: ""
+        AUTO_AFTER_SALE_REGIONS: ["us-east-1", "eu-north-1"],
+        AUTO_AFTER_SALE_FAIL_ON_REFRESH_ERROR: true
     };
 
     try {

@@ -192,8 +192,10 @@ async function loadConfiguration() {
         if (afterSaleShopEmailEl) afterSaleShopEmailEl.value = data.AUTO_AFTER_SALE_SHOP_EMAIL || '';
         const afterSaleShopPasswordEl = document.getElementById('afterSaleShopPassword');
         if (afterSaleShopPasswordEl) afterSaleShopPasswordEl.value = data.AUTO_AFTER_SALE_SHOP_PASSWORD || '';
-        const afterSaleRegionEl = document.getElementById('afterSaleRegion');
-        if (afterSaleRegionEl) afterSaleRegionEl.value = data.AUTO_AFTER_SALE_REGION || '';
+        const afterSaleRegionsEl = document.getElementById('afterSaleRegions');
+        if (afterSaleRegionsEl) afterSaleRegionsEl.value = (data.AUTO_AFTER_SALE_REGIONS || ['us-east-1', 'eu-north-1']).join(', ');
+        const afterSaleFailEl = document.getElementById('afterSaleFailOnRefreshError');
+        if (afterSaleFailEl) afterSaleFailEl.value = data.AUTO_AFTER_SALE_FAIL_ON_REFRESH_ERROR !== false ? 'true' : 'false';
         const afterSaleIntervalEl = document.getElementById('afterSaleInterval');
         if (afterSaleIntervalEl) afterSaleIntervalEl.value = data.AUTO_AFTER_SALE_INTERVAL || 120000;
         const afterSaleUrgentIntervalEl = document.getElementById('afterSaleUrgentInterval');
@@ -204,7 +206,7 @@ async function loadConfiguration() {
         // 联动禁用/启用售后相关输入框
         const afterSaleFieldIds = [
             'afterSaleShopBaseUrl', 'afterSaleShopEmail', 'afterSaleShopPassword',
-            'afterSaleRegion', 'afterSaleInterval', 'afterSaleUrgentInterval', 'afterSaleMaxRetries'
+            'afterSaleRegions', 'afterSaleFailOnRefreshError', 'afterSaleInterval', 'afterSaleUrgentInterval', 'afterSaleMaxRetries'
         ];
         function toggleAfterSaleFields(enabled) {
             const disabled = !enabled;
@@ -325,7 +327,9 @@ async function saveConfiguration() {
     config.AUTO_AFTER_SALE_SHOP_BASE_URL = document.getElementById('afterSaleShopBaseUrl')?.value?.trim() || 'https://kiroshop.xyz';
     config.AUTO_AFTER_SALE_SHOP_EMAIL = document.getElementById('afterSaleShopEmail')?.value?.trim() || '';
     config.AUTO_AFTER_SALE_SHOP_PASSWORD = document.getElementById('afterSaleShopPassword')?.value || '';
-    config.AUTO_AFTER_SALE_REGION = document.getElementById('afterSaleRegion')?.value?.trim() || '';
+    const regionsStr = document.getElementById('afterSaleRegions')?.value?.trim() || '';
+    config.AUTO_AFTER_SALE_REGIONS = regionsStr ? regionsStr.split(',').map(s => s.trim()).filter(Boolean) : ['us-east-1', 'eu-north-1'];
+    config.AUTO_AFTER_SALE_FAIL_ON_REFRESH_ERROR = document.getElementById('afterSaleFailOnRefreshError')?.value === 'true';
     config.AUTO_AFTER_SALE_INTERVAL = parseInt(document.getElementById('afterSaleInterval')?.value) || 120000;
     config.AUTO_AFTER_SALE_URGENT_INTERVAL = parseInt(document.getElementById('afterSaleUrgentInterval')?.value) || 10000;
     config.AUTO_AFTER_SALE_MAX_URGENT_RETRIES = parseInt(document.getElementById('afterSaleMaxRetries')?.value) || 30;

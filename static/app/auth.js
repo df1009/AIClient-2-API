@@ -131,7 +131,11 @@ class ApiClient {
                 let message = `HTTP ${response.status}`;
                 try {
                     const parsed = JSON.parse(errorBody);
-                    message = parsed.error?.message || parsed.message || message;
+                    if (typeof parsed.error === 'string') {
+                        message = parsed.error;
+                    } else {
+                        message = parsed.error?.message || parsed.message || message;
+                    }
                 } catch (_) {}
                 throw new Error(message);
             }
@@ -225,7 +229,11 @@ class ApiClient {
                 let message = `HTTP ${response.status}`;
                 try {
                     const parsed = JSON.parse(errorBody);
-                    message = parsed.error?.message || parsed.message || message;
+                    if (typeof parsed.error === 'string') {
+                        message = parsed.error;
+                    } else {
+                        message = parsed.error?.message || parsed.message || message;
+                    }
                 } catch (_) {}
                 throw new Error(message);
             }
