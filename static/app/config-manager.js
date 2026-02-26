@@ -334,20 +334,6 @@ async function saveConfiguration() {
     config.AUTO_AFTER_SALE_URGENT_INTERVAL = parseInt(document.getElementById('afterSaleUrgentInterval')?.value) || 10000;
     config.AUTO_AFTER_SALE_MAX_URGENT_RETRIES = parseInt(document.getElementById('afterSaleMaxRetries')?.value) || 30;
 
-    // 最小值校验
-    if (config.AUTO_AFTER_SALE_INTERVAL < 30000) {
-        showToast(t('common.warning'), t('config.afterSale.intervalMin') || '巡检间隔不能小于 30000ms', 'warning');
-        return;
-    }
-    if (config.AUTO_AFTER_SALE_URGENT_INTERVAL < 5000) {
-        showToast(t('common.warning'), t('config.afterSale.urgentIntervalMin') || '紧急巡检间隔不能小于 5000ms', 'warning');
-        return;
-    }
-    if (config.AUTO_AFTER_SALE_MAX_URGENT_RETRIES < 1 || config.AUTO_AFTER_SALE_MAX_URGENT_RETRIES > 999) {
-        showToast(t('common.warning'), t('config.afterSale.maxRetriesRange') || '最大重试次数须在 1-999 之间', 'warning');
-        return;
-    }
-
     // 售后启用时校验邮箱和密码
     if (config.AUTO_AFTER_SALE_ENABLED && (!config.AUTO_AFTER_SALE_SHOP_EMAIL || !config.AUTO_AFTER_SALE_SHOP_PASSWORD)) {
         showToast(t('common.warning'), t('config.afterSale.credentialsRequired') || '启用自动售后时，邮箱和密码不能为空', 'warning');
