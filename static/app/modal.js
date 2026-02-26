@@ -470,11 +470,21 @@ function renderProviderList(providers) {
                         <button class="btn-small btn-info" onclick="window.checkBanStatus('${currentProviderType}', '${provider.uuid}', event)" title="${t('provider.checkBan')}">
                             <i class="fa-solid fa-shield-halved"></i> ${t('provider.checkBan')}
                         </button>
+                        ${provider.afterSaleMeta?.afterSaleExpired ? `
+                        <span class="badge badge-expired" style="margin-right:6px;" title="${t('provider.afterSaleExpiredTooltip')}">
+                            <i class="fa-solid fa-circle-exclamation"></i> ${t('provider.replaceExhausted')}
+                        </span>
+                        <button class="btn-small btn-secondary" onclick="window.resetAfterSaleExpired('${currentProviderType}', '${provider.uuid}', event)"
+                            title="${t('provider.resetExpiredTooltip')}">
+                            <i class="fa-solid fa-arrow-rotate-left"></i> ${t('provider.resetExpired')}
+                        </button>
+                        ` : `
                         <button class="btn-small btn-warning" onclick="window.replaceBannedAccount('${currentProviderType}', '${provider.uuid}', event)"
-                            ${provider.afterSaleMeta?.afterSaleExpired ? `title="${t('provider.afterSaleExpiredTooltip')}"` : `title="${t('provider.replaceBanned')}"`}
+                            title="${t('provider.replaceBanned')}"
                             ${provider.isReplaced ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
                             <i class="fa-solid fa-rotate"></i> ${t('provider.replaceBanned')}
                         </button>
+                        `}
                         ` : ''}
                     </div>
                 </div>

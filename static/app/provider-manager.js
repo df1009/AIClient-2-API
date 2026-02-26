@@ -3132,6 +3132,32 @@ window.replaceBannedAccount = async function(providerType, uuid, event) {
     }
 };
 
+window.resetAfterSaleExpired = async function(providerType, uuid, event) {
+    const btn = event.currentTarget;
+    btn.disabled = true;
+    btn.querySelector('i').className = 'fa-solid fa-spinner fa-spin';
+
+    try {
+        const response = await window.apiClient.post(
+            `/providers/${encodeURIComponent(providerType)}/${uuid}/reset-expired`
+        );
+
+        if (response.success) {
+            showToast(t('common.success'), t('provider.resetExpired.success'), 'success');
+            loadProviders();
+        } else {
+            showToast(t('common.error'), response.message || t('provider.resetExpired.failed'), 'error');
+        }
+    } catch (error) {
+        showToast(t('common.error'), error.message || t('provider.resetExpired.failed'), 'error');
+    } finally {
+        if (btn.isConnected) {
+            btn.disabled = false;
+            btn.querySelector('i').className = 'fa-solid fa-arrow-rotate-left';
+        }
+    }
+};
+
 export {
     loadSystemInfo,
     updateTimeDisplay,

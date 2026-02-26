@@ -135,8 +135,8 @@ export class ProviderPoolManager {
         // --- 自动售后定时任务配置 ---
         this.afterSaleEnabled = options.globalConfig?.AUTO_AFTER_SALE_ENABLED ?? true;
         this.afterSaleInterval = options.globalConfig?.AUTO_AFTER_SALE_INTERVAL ?? 120000;
-        this.afterSaleUrgentInterval = options.globalConfig?.AUTO_AFTER_SALE_URGENT_INTERVAL ?? 10000;
-        this.afterSaleMaxUrgentRetries = options.globalConfig?.AUTO_AFTER_SALE_MAX_URGENT_RETRIES ?? 30;
+        this.afterSaleUrgentInterval = options.globalConfig?.AUTO_AFTER_SALE_URGENT_INTERVAL ?? 1000;
+        this.afterSaleMaxUrgentRetries = options.globalConfig?.AUTO_AFTER_SALE_MAX_URGENT_RETRIES ?? 0;
         this.afterSaleShopBaseUrl = options.globalConfig?.AUTO_AFTER_SALE_SHOP_BASE_URL || 'https://kiroshop.xyz';
         this.afterSaleShopEmail = options.globalConfig?.AUTO_AFTER_SALE_SHOP_EMAIL || '';
         this.afterSaleShopPassword = options.globalConfig?.AUTO_AFTER_SALE_SHOP_PASSWORD || '';
@@ -2101,7 +2101,8 @@ export class ProviderPoolManager {
         try {
             timerInfo.retryCount++;
 
-            if (timerInfo.retryCount > maxRetries) {
+            // maxRetries=0 表示无限重试
+            if (maxRetries > 0 && timerInfo.retryCount > maxRetries) {
                 this._log('warn', `[AfterSale] Urgent replace exceeded max retries (${maxRetries}) for ${uuid}, marking afterSaleExpired`);
                 this._clearUrgentTimer(uuid);
                 // 标记为售后过期，不再重试
@@ -2113,7 +2114,7 @@ export class ProviderPoolManager {
                 return;
             }
 
-            this._log('info', `[AfterSale] Replace attempt ${timerInfo.retryCount}/${maxRetries} for ${uuid} (orderId=${meta.orderId})`);
+            this._log('info', `[AfterSale] Replace attempt ${timerInfo.retryCount}${maxRetries > 0 ? '/' + maxRetries : ''} for ${uuid} (orderId=${meta.orderId})`);
 
             const shopClient = this._getShopClient();
             if (!shopClient) {

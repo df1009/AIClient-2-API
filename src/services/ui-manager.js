@@ -230,6 +230,14 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
         return await providerApi.handleReplaceBanned(req, res, currentConfig, providerPoolManager, providerType, providerUuid);
     }
 
+    // Reset afterSaleExpired for specific provider
+    const resetExpiredMatch = pathParam.match(/^\/api\/providers\/([^\/]+)\/([^\/]+)\/reset-expired$/);
+    if (method === 'POST' && resetExpiredMatch) {
+        const providerType = decodeURIComponent(resetExpiredMatch[1]);
+        const providerUuid = resetExpiredMatch[2];
+        return await providerApi.handleResetAfterSaleExpired(req, res, currentConfig, providerPoolManager, providerType, providerUuid);
+    }
+
     // Set/Add tags for specific provider
     const tagsMatch = pathParam.match(/^\/api\/providers\/([^\/]+)\/([^\/]+)\/tags$/);
     if ((method === 'PUT' || method === 'POST') && tagsMatch) {

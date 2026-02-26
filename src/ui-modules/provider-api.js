@@ -1203,6 +1203,37 @@ export async function handleReplaceBanned(req, res, currentConfig, providerPoolM
 }
 
 /**
+ * 重置 afterSaleExpired 状态，允许重新自动换号
+ */
+export async function handleResetAfterSaleExpired(req, res, currentConfig, providerPoolManager, providerType, providerUuid) {
+    try {
+        const ps = providerPoolManager.providerStatus[providerType]?.find(p => p.config.uuid === providerUuid);
+        if (!ps) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: 'Provider not found' }));
+            return true;
+        }
+
+        if (!ps.config.afterSaleMeta) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: '缺少售后元数据' }));
+            return true;
+        }
+
+        ps.config.afterSaleMeta.afterSaleExpired = false;
+        providerPoolManager._flushImmediately(providerType);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: '已重置，将重新尝试换号' }));
+        return true;
+    } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: error.message }));
+        return true;
+    }
+}
+
+/**
  * 设置/添加标签
  */
 export async function handleSetTags(req, res, currentConfig, providerPoolManager, providerType, providerUuid) {
