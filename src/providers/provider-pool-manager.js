@@ -145,6 +145,7 @@ export class ProviderPoolManager {
         this._afterSaleUrgentTimers = new Map();
         this.replacingUuids = new Set();
         this._autoTagTimers = new Map();
+        this._afterSaleScanCount = 0; // 售后扫描计数器
         // region 重试列表：优先读配置，fallback 默认值
         const configRegions = options.globalConfig?.AUTO_AFTER_SALE_REGIONS;
         this.afterSaleRegions = (Array.isArray(configRegions) && configRegions.length > 0)
@@ -1961,7 +1962,12 @@ export class ProviderPoolManager {
             return;
         }
 
-        this._log('info', '[AfterSale] Running scheduled scan...');
+        this._afterSaleScanCount++;
+        const shouldLog = this._afterSaleScanCount % 100 === 0;
+
+        if (shouldLog) {
+            this._log('info', `[AfterSale] Running scheduled scan... (count: ${this._afterSaleScanCount})`);
+        }
 
         const providerType = 'claude-kiro-oauth';
         const providers = this.providerStatus[providerType] || [];
@@ -1987,7 +1993,9 @@ export class ProviderPoolManager {
         });
 
         if (targets.length === 0) {
-            this._log('info', '[AfterSale] No unhealthy after-sale nodes found');
+            if (shouldLog) {
+                this._log('info', '[AfterSale] No unhealthy after-sale nodes found');
+            }
             return;
         }
 
@@ -2141,24 +2149,37 @@ export class ProviderPoolManager {
                     // 保存商城的错误信息到 afterSaleMeta
                     providerConfig.afterSaleMeta.lastReplaceError = errorDetail;
                     
-                    // 只有真正过期时才标记 afterSaleExpired=true，库存不足时继续重试
-                    if (errorDetail.includes('质保期') || errorDetail.includes('过期')) {
-                        this._log('warn', `[AfterSale] Warranty expired, marking afterSaleExpired=true`);
-                        providerConfig.afterSaleMeta.afterSaleExpired = true;
-                        providerConfig.afterSaleMeta.expiredReason = 'warranty_expired';
-                        this._debouncedSave(providerType);
-                        this._clearUrgentTimer(uuid);
-                    } else if (errorDetail.includes('库存不足')) {
-                        this._log('warn', `[AfterSale] Out of stock, will retry later`);
-                        // 不标记为过期，继续重试
-                        this._debouncedSave(providerType);
+                    // 检查是否有质保到期时间
+                    const warrantyExpireAt = providerConfig.afterSaleMeta.warrantyExpireAt;
+                    if (warrantyExpireAt) {
+                        const now = Date.now();
+                        const expireTime = new Date(warrantyExpireAt).getTime();
+                        
+                        if (now > expireTime) {
+                            // 质保期已过，停止重试
+                            this._log('warn', `[AfterSale] Warranty expired (expire at: ${warrantyExpireAt}), marking afterSaleExpired=true`);
+                            providerConfig.afterSaleMeta.afterSaleExpired = true;
+                            providerConfig.afterSaleMeta.expiredReason = 'warranty_expired';
+                            this._debouncedSave(providerType);
+                            this._clearUrgentTimer(uuid);
+                        } else {
+                            // 质保期内，继续重试
+                            this._log('warn', `[AfterSale] Replace failed but still in warranty (expire at: ${warrantyExpireAt}), will retry later`);
+                            this._debouncedSave(providerType);
+                        }
                     } else {
-                        // 其他 400 错误，标记为过期
-                        this._log('warn', `[AfterSale] Unknown 400 error, marking afterSaleExpired=true`);
-                        providerConfig.afterSaleMeta.afterSaleExpired = true;
-                        providerConfig.afterSaleMeta.expiredReason = 'http_400_unknown';
-                        this._debouncedSave(providerType);
-                        this._clearUrgentTimer(uuid);
+                        // 没有质保时间信息，根据错误信息判断
+                        if (errorDetail.includes('质保期') || errorDetail.includes('过期')) {
+                            this._log('warn', `[AfterSale] Warranty expired (by error message), marking afterSaleExpired=true`);
+                            providerConfig.afterSaleMeta.afterSaleExpired = true;
+                            providerConfig.afterSaleMeta.expiredReason = 'warranty_expired';
+                   this._debouncedSave(providerType);
+                            this._clearUrgentTimer(uuid);
+                        } else {
+                            // 其他错误，继续重试
+                            this._log('warn', `[AfterSale] Replace failed, will retry later`);
+                            this._debouncedSave(providerType);
+                        }
                     }
                 } else {
                     this._log('error', `[AfterSale] Replace failed for ${uuid} (HTTP ${status}): ${error.message}`);

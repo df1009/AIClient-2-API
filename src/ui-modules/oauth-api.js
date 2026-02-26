@@ -714,6 +714,18 @@ export async function handleImportAfterSaleCredentials(req, res) {
 
         newNode.importSource = 'auto-after-sale';
         newNode.tags = ['导入'];
+        
+        // 计算质保到期时间：从交付时间开始计算
+        let warrantyExpireAt = null;
+        if (orderData.warranty_hours && orderData.deliveries && orderData.deliveries[0]) {
+            const deliveredAt = orderData.deliveries[0].delivered_at;
+            if (deliveredAt) {
+                const deliveryTime = new Date(deliveredAt).getTime();
+                const warrantyMs = orderData.warranty_hours * 60 * 60 * 1000;
+                warrantyExpireAt = new Date(deliveryTime + warrantyMs).toISOString();
+            }
+        }
+        
         newNode.afterSaleMeta = {
             orderId,
             deliveryId,
@@ -721,7 +733,8 @@ export async function handleImportAfterSaleCredentials(req, res) {
             accountInfo,
             subscriptionInfoRaw: matchedAccount.subscription_info || '',
             startUrl: startUrl || '',
-            afterSaleExpired: false
+            afterSaleExpired: false,
+            warrantyExpireAt: warrantyExpireAt
         };
 
         // 5. 保存 provider_pools.json

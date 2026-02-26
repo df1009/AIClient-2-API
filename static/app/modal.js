@@ -400,6 +400,34 @@ function renderProviderList(providers) {
             `;
         }
         
+        // 质保剩余时间
+        let warrantyInfoHtml = '';
+        if (provider.afterSaleMeta?.warrantyExpireAt) {
+            const expireTime = new Date(provider.afterSaleMeta.warrantyExpireAt).getTime();
+            const now = Date.now();
+            const remainingMs = expireTime - now;
+            
+            if (remainingMs > 0) {
+                const hours = Math.floor(remainingMs / (1000 * 60 * 60));
+                const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+                warrantyInfoHtml = `
+                    <div class="provider-error-info" style="background:#d1fae5;border-left:3px solid #10b981;">
+                        <i class="fas fa-shield-alt" style="color:#10b981;"></i>
+                        <span class="error-label">质保剩余:</span>
+                        <span class="error-message">${hours}小时${minutes}分钟 (到期时间: ${new Date(expireTime).toLocaleString()})</span>
+                    </div>
+                `;
+            } else {
+                warrantyInfoHtml = `
+                    <div class="provider-error-info" style="background:#fee2e2;border-left:3px solid #ef4444;">
+                        <i class="fas fa-exclamation-triangle" style="color:#ef4444;"></i>
+                        <span class="error-label">质保状态:</span>
+                        <span class="error-message">已过期 (到期时间: ${new Date(expireTime).toLocaleString()})</span>
+                    </div>
+                `;
+            }
+        }
+        
         // 构建售后标识
         let afterSaleBadgeHtml = '';
         if (provider.importSource === 'auto-after-sale') {
@@ -466,6 +494,7 @@ function renderProviderList(providers) {
                         </div>
                         ${errorInfoHtml}
                         ${afterSaleErrorHtml}
+                        ${warrantyInfoHtml}
                     </div>
                     <div class="provider-actions-group">
                         <button class="btn-small ${toggleButtonClass}" onclick="window.toggleProviderStatus('${provider.uuid}', event)" title="${toggleButtonText}此提供商" ${provider.isReplaced ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>

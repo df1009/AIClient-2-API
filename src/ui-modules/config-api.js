@@ -125,22 +125,6 @@ export async function handleUpdateConfig(req, res, currentConfig, providerPoolMa
         if (newConfig.AUTO_AFTER_SALE_AUTO_TAG_TAGS !== undefined) currentConfig.AUTO_AFTER_SALE_AUTO_TAG_TAGS = newConfig.AUTO_AFTER_SALE_AUTO_TAG_TAGS;
 
         // 数值范围校验
-        if (currentConfig.AUTO_AFTER_SALE_INTERVAL !== undefined && currentConfig.AUTO_AFTER_SALE_INTERVAL < 30000) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: { message: 'AUTO_AFTER_SALE_INTERVAL must be >= 30000' } }));
-            return true;
-        }
-        if (currentConfig.AUTO_AFTER_SALE_URGENT_INTERVAL !== undefined && currentConfig.AUTO_AFTER_SALE_URGENT_INTERVAL < 5000) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: { message: 'AUTO_AFTER_SALE_URGENT_INTERVAL must be >= 5000' } }));
-            return true;
-        }
-        if (currentConfig.AUTO_AFTER_SALE_MAX_URGENT_RETRIES !== undefined &&
-            (currentConfig.AUTO_AFTER_SALE_MAX_URGENT_RETRIES < 1 || currentConfig.AUTO_AFTER_SALE_MAX_URGENT_RETRIES > 999)) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: { message: 'AUTO_AFTER_SALE_MAX_URGENT_RETRIES must be between 1 and 999' } }));
-            return true;
-        }
         if (currentConfig.AUTO_AFTER_SALE_AUTO_TAG_DELAY !== undefined && currentConfig.AUTO_AFTER_SALE_AUTO_TAG_DELAY < 0) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: { message: 'AUTO_AFTER_SALE_AUTO_TAG_DELAY must be >= 0' } }));
