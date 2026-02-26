@@ -2368,6 +2368,7 @@ export class ProviderPoolManager {
             subscriptionInfoRaw: newAccount.subscription_info || '',
             startUrl: startUrl,
             afterSaleExpired: false,
+            warrantyExpireAt: oldMeta.warrantyExpireAt || null,
             replacedAt: new Date().toISOString()
         };
 
