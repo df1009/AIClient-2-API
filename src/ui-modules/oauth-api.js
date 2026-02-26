@@ -729,16 +729,41 @@ export async function handleImportAfterSaleCredentials(req, res) {
         logger.info(`[AfterSale] Import success: uuid=${newNode.uuid}, orderId=${orderId}, accountId=${accountId}`);
 
         // 同步更新 ProviderPoolManager 内存状态
-        // 直接用已含 afterSaleMeta 的 poolsData 重新加载，并立即写文件
-        // 防止之前 autoLinkProviderConfigs 触发的 _debouncedSave 覆盖掉 afterSaleMeta
+        // 不重新 initializeProviderStatus()（会触发刷新等副作用导致竞态覆盖），
+        // 而是直接在内存中找到对应节点，原地追加 afterSaleMeta 等字段
         try {
             const { getProviderPoolManager } = await import('../services/service-manager.js');
             const poolManager = getProviderPoolManager();
             if (poolManager) {
-                poolManager.providerPools = poolsData;
-                poolManager.initializeProviderStatus();
-                // 立即写文件，清掉 pending debounce（防止旧数据覆盖）
+                // 1. 更新 providerPools 中的原始配置
+                const memPool = poolManager.providerPools['claude-kiro-oauth'] || [];
+                const memNode = memPool.find(p =>
+                    p.uuid === newNode.uuid ||
+                    p.KIRO_OAUTH_CREDS_FILE_PATH === importResult.path ||
+                    p.KIRO_OAUTH_CREDS_FILE_PATH === './' + importResult.path
+                );
+                if (memNode) {
+                    memNode.importSource = 'auto-after-sale';
+                    memNode.tags = ['导入'];
+                    memNode.afterSaleMeta = newNode.afterSaleMeta;
+                }
+
+                // 2. 更新 providerStatus 中的 config 引用
+                const statusPool = poolManager.providerStatus['claude-kiro-oauth'] || [];
+                const statusNode = statusPool.find(ps =>
+                    ps.config.uuid === newNode.uuid ||
+                    ps.config.KIRO_OAUTH_CREDS_FILE_PATH === importResult.path ||
+                    ps.config.KIRO_OAUTH_CREDS_FILE_PATH === './' + importResult.path
+                );
+                if (statusNode) {
+                    statusNode.config.importSource = 'auto-after-sale';
+                    statusNode.config.tags = ['导入'];
+                    statusNode.config.afterSaleMeta = newNode.afterSaleMeta;
+                }
+
+                // 3. 立即写文件，清掉 pending debounce（防止旧数据覆盖）
                 await poolManager._flushImmediately('claude-kiro-oauth');
+                logger.info(`[AfterSale] Memory state synced for uuid=${newNode.uuid}`);
             }
         } catch (e) {
             logger.warn('[AfterSale] Failed to sync memory state:', e.message);
