@@ -737,7 +737,10 @@ function getFieldOrder(provider) {
     const excludedFields = [
         'isHealthy', 'lastUsed', 'usageCount', 'errorCount', 'lastErrorTime',
         'uuid', 'isDisabled', 'lastHealthCheckTime', 'lastHealthCheckModel', 'lastErrorMessage',
-        'notSupportedModels', 'refreshCount', 'needsRefresh', '_lastSelectionSeq', 'weight'
+        'notSupportedModels', 'refreshCount', 'needsRefresh', '_lastSelectionSeq', 'weight',
+        // 售后换号相关字段（object/array 类型，不能渲染为 input）
+        'afterSaleMeta', 'importSource', 'isReplaced', 'replacedByUuid', 'replacedAt',
+        'replacedFromUuid', 'tags'
     ];
     
     // 从 getProviderTypeFields 获取字段顺序映射

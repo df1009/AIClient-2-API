@@ -1103,7 +1103,7 @@ export async function handleCheckBan(req, res, currentConfig, providerPoolManage
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
                 success: true,
-                is_banned: match.is_banned,
+                is_banned: match.banned ?? match.is_banned ?? null,
                 account_id: match.account_id,
                 email: match.email,
                 checked_at: match.checked_at
@@ -1171,7 +1171,7 @@ export async function handleReplaceBanned(req, res, currentConfig, providerPoolM
             }
 
             try {
-                await providerPoolManager._applyNewAccount(providerType, provider, replaceResult.new_account);
+                await providerPoolManager._applyNewAccount(providerType, provider, replaceResult.new_account, { source: '手动' });
             } catch (applyError) {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ success: false, message: '换号成功但新账号导入失败，请手动处理: ' + applyError.message }));

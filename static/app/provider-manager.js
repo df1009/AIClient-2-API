@@ -3118,6 +3118,9 @@ window.replaceBannedAccount = async function(providerType, uuid, event) {
     } catch (error) {
         if (error.message && error.message.startsWith('HTTP 409')) {
             showToast(t('common.warning'), t('provider.replace.inProgress'), 'warning');
+        } else if (error.message && !error.message.includes('Failed to fetch') && !error.message.includes('NetworkError')) {
+            // 服务端返回的业务错误
+            showToast(t('common.error'), error.message, 'error');
         } else {
             showToast(t('common.error'), t('provider.networkError'), 'error');
         }

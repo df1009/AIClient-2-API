@@ -690,6 +690,7 @@ export class ProviderPoolManager {
                 providerConfig.replacedFromUuid = providerConfig.replacedFromUuid || null;
                 providerConfig.tags = Array.isArray(providerConfig.tags) ? providerConfig.tags : [];
 
+
                 this.providerStatus[providerType].push({
                     config: providerConfig,
                     uuid: providerConfig.uuid, // Still keep uuid at the top level for easy access
@@ -1646,6 +1647,20 @@ export class ProviderPoolManager {
      * 批量保存所有待保存的 providerType（优化为单次文件写入）
      * @private
      */
+    async _flushImmediately(providerType) {
+        // 立即写入指定 providerType，不走 debounce timer
+        // 用于换号等关键操作，防止 reload-config 竞态
+        this.pendingSaves.add(providerType);
+        if (this.saveTimer) {
+            clearTimeout(this.saveTimer);
+            this.saveTimer = null;
+        }
+        await this._flushPendingSaves();
+    }
+
+    /**
+     * @private
+     */
     async _flushPendingSaves() {
         const typesToSave = Array.from(this.pendingSaves);
         if (typesToSave.length === 0) return;
@@ -1672,6 +1687,14 @@ export class ProviderPoolManager {
             // 更新所有待保存的 providerType
             for (const providerType of typesToSave) {
                 if (this.providerStatus[providerType]) {
+                    // 构建文件中已有数据的 uuid 索引，用于合并保护 afterSaleMeta
+                    const filePoolByUuid = {};
+                    if (currentPools[providerType]) {
+                        for (const fp of currentPools[providerType]) {
+                            if (fp.uuid) filePoolByUuid[fp.uuid] = fp;
+                        }
+                    }
+
                     currentPools[providerType] = this.providerStatus[providerType].map(p => {
                         // Convert Date objects to ISOString if they exist
                         const config = { ...p.config };
@@ -1684,6 +1707,43 @@ export class ProviderPoolManager {
                         if (config.lastHealthCheckTime instanceof Date) {
                             config.lastHealthCheckTime = config.lastHealthCheckTime.toISOString();
                         }
+
+                        // 保护售后/换号字段：如果内存中丢失但文件中存在，从文件恢复
+                        const fileVersion = filePoolByUuid[config.uuid];
+                        if (fileVersion) {
+                            // 售后元数据
+                            if (!config.afterSaleMeta && fileVersion.afterSaleMeta && typeof fileVersion.afterSaleMeta === 'object') {
+                                config.afterSaleMeta = fileVersion.afterSaleMeta;
+                                p.config.afterSaleMeta = fileVersion.afterSaleMeta;
+                            }
+                            if (!config.importSource && fileVersion.importSource) {
+                                config.importSource = fileVersion.importSource;
+                                p.config.importSource = fileVersion.importSource;
+                            }
+                            // 换号链路字段
+                            if (!config.replacedFromUuid && fileVersion.replacedFromUuid) {
+                                config.replacedFromUuid = fileVersion.replacedFromUuid;
+                                p.config.replacedFromUuid = fileVersion.replacedFromUuid;
+                            }
+                            if (!config.isReplaced && fileVersion.isReplaced) {
+                                config.isReplaced = fileVersion.isReplaced;
+                                p.config.isReplaced = fileVersion.isReplaced;
+                            }
+                            if (!config.replacedByUuid && fileVersion.replacedByUuid) {
+                                config.replacedByUuid = fileVersion.replacedByUuid;
+                                p.config.replacedByUuid = fileVersion.replacedByUuid;
+                            }
+                            if (!config.replacedAt && fileVersion.replacedAt) {
+                                config.replacedAt = fileVersion.replacedAt;
+                                p.config.replacedAt = fileVersion.replacedAt;
+                            }
+                            // 标签
+                            if ((!config.tags || config.tags.length === 0) && fileVersion.tags && fileVersion.tags.length > 0) {
+                                config.tags = fileVersion.tags;
+                                p.config.tags = fileVersion.tags;
+                            }
+                        }
+
                         return config;
                     });
                 } else {
@@ -1914,14 +1974,16 @@ export class ProviderPoolManager {
             }
         }
 
+        const now = Date.now();
+
         const targets = providers.filter(ps => {
             const c = ps.config;
-            return c.importSource === 'auto-after-sale'
-                && !c.isHealthy
-                && !c.isDisabled
-                && !c.isReplaced
-                && !c.afterSaleMeta?.afterSaleExpired
-                && !this._afterSaleUrgentTimers.has(c.uuid);
+            if (c.importSource !== 'auto-after-sale') return false;
+            if (c.isHealthy || c.isDisabled || c.isReplaced) return false;
+            if (c.afterSaleMeta?.afterSaleExpired) return false;
+            if (this._afterSaleUrgentTimers.has(c.uuid)) return false;
+
+            return true;
         });
 
         if (targets.length === 0) {
@@ -1977,7 +2039,7 @@ export class ProviderPoolManager {
                 return;
             }
 
-            if (!matched.banned) {
+            if (!matched.banned && !matched.is_banned) {
                 this._log('info', `[AfterSale] Node ${uuid} not banned, skipping`);
                 return;
             }
@@ -2040,8 +2102,14 @@ export class ProviderPoolManager {
             timerInfo.retryCount++;
 
             if (timerInfo.retryCount > maxRetries) {
-                this._log('warn', `[AfterSale] Urgent replace exceeded max retries (${maxRetries}) for ${uuid}, falling back to regular scan`);
+                this._log('warn', `[AfterSale] Urgent replace exceeded max retries (${maxRetries}) for ${uuid}, marking afterSaleExpired`);
                 this._clearUrgentTimer(uuid);
+                // 标记为售后过期，不再重试
+                const ps = this.providerStatus[providerType]?.find(p => p.config.uuid === uuid);
+                if (ps?.config?.afterSaleMeta) {
+                    ps.config.afterSaleMeta.afterSaleExpired = true;
+                    this._flushImmediately(providerType);
+                }
                 return;
             }
 
@@ -2095,7 +2163,7 @@ export class ProviderPoolManager {
      * 应用新账号：创建新节点、继承旧节点属性、禁用旧节点
      * @private
      */
-    async _applyNewAccount(providerType, oldProviderConfig, newAccount) {
+    async _applyNewAccount(providerType, oldProviderConfig, newAccount, { source = '自动' } = {}) {
         const oldUuid = oldProviderConfig.uuid;
         const oldMeta = oldProviderConfig.afterSaleMeta;
 
@@ -2135,6 +2203,7 @@ export class ProviderPoolManager {
             this._log('info', `[AfterSale] Trying region ${region} for ${oldUuid} (${regions.indexOf(region) + 1}/${regions.length})`);
 
             try {
+                // skipDuplicateCheck=true: 换号场景下新账号 refreshToken 可能与旧凭据重复
                 importResult = await importAwsCredentials({
                     clientId: credentials.clientId,
                     clientSecret: credentials.clientSecret,
@@ -2143,8 +2212,8 @@ export class ProviderPoolManager {
                     authMethod: 'builder-id',
                     startUrl,
                     idcRegion: region,
-                    failOnRefreshError: true
-                });
+                    failOnRefreshError: this.globalConfig.AUTO_AFTER_SALE_FAIL_ON_REFRESH_ERROR !== false
+                }, true);
             } catch (importError) {
                 this._log('error', `[AfterSale] importAwsCredentials exception for ${oldUuid} region=${region}: ${importError.message}`);
                 importResult = { success: false, error: importError.message };
@@ -2160,26 +2229,77 @@ export class ProviderPoolManager {
         }
 
         // 5. 所有 region 都失败 -> 标记 afterSaleExpired
+        // 注意：importAwsCredentials 可能触发 initializeProviderStatus() 重建 providerStatus，
+        // oldProviderConfig 引用可能已失效，必须重新查找
         if (!importResult?.success) {
             this._log('warn', `[AfterSale] All regions failed for ${oldUuid}, marking afterSaleExpired=true`);
-            oldProviderConfig.afterSaleMeta.afterSaleExpired = true;
-            oldProviderConfig.afterSaleMeta.expiredReason = 'all_regions_failed';
+            const refreshedOld = this._findProvider(providerType, oldUuid);
+            if (refreshedOld) {
+                refreshedOld.config.afterSaleMeta.afterSaleExpired = true;
+                refreshedOld.config.afterSaleMeta.expiredReason = 'all_regions_failed';
+            }
             this._debouncedSave(providerType);
             this._clearUrgentTimer(oldUuid);
             return;
         }
 
         // 6. 找到新节点，追加售后字段 + 继承旧节点属性
+        // 注意：importAwsCredentials → autoLinkProviderConfigs → initializeProviderStatus()
+        // 已重建 providerStatus，旧的 oldProviderConfig 引用已失效，需重新查找
+        // 如果并发 initializeProviderStatus()（如 UI 编辑触发 reload-config），
+        // 内存可能再次被重建，需要用 path 末尾匹配来兜底
+        const normalizedPath = importResult.path.replace(/^\.\//, '');
         const pool = this.providerStatus[providerType] || [];
-        const newProviderStatus = pool.find(ps =>
-            ps.config.KIRO_OAUTH_CREDS_FILE_PATH === importResult.path ||
-            ps.config.KIRO_OAUTH_CREDS_FILE_PATH === './' + importResult.path
-        );
+        let newProviderStatus = pool.find(ps => {
+            const configPath = (ps.config.KIRO_OAUTH_CREDS_FILE_PATH || '').replace(/^\.\//, '');
+            return configPath === normalizedPath;
+        });
 
         if (!newProviderStatus) {
-            this._log('error', `[AfterSale] New node not found in memory after import (path=${importResult.path})`);
+            // 可能被并发 initializeProviderStatus 重建了，从 providerPools 里找
+            const poolConfigs = this.providerPools[providerType] || [];
+            const foundConfig = poolConfigs.find(c => {
+                const configPath = (c.KIRO_OAUTH_CREDS_FILE_PATH || '').replace(/^\.\//, '');
+                return configPath === normalizedPath;
+            });
+            if (foundConfig) {
+                // 在 providerStatus 中用 uuid 再找一次
+                newProviderStatus = pool.find(ps => ps.config.uuid === foundConfig.uuid);
+            }
+        }
+
+        if (!newProviderStatus) {
+            // 最后手段：从文件重新加载 providerPools 并重新初始化
+            this._log('warn', `[AfterSale] New node not found in memory (path=${importResult.path}), reloading from file...`);
+            try {
+                const filePath = this.globalConfig.PROVIDER_POOLS_FILE_PATH || 'configs/provider_pools.json';
+                const fileContent = await fs.promises.readFile(filePath, 'utf8');
+                const freshPools = JSON.parse(fileContent);
+                this.providerPools = freshPools;
+                this.initializeProviderStatus();
+                
+                const refreshedPool = this.providerStatus[providerType] || [];
+                newProviderStatus = refreshedPool.find(ps => {
+                    const configPath = (ps.config.KIRO_OAUTH_CREDS_FILE_PATH || '').replace(/^\.\//, '');
+                    return configPath === normalizedPath;
+                });
+            } catch (reloadErr) {
+                this._log('error', `[AfterSale] Failed to reload from file: ${reloadErr.message}`);
+            }
+        }
+
+        if (!newProviderStatus) {
+            this._log('error', `[AfterSale] New node not found even after file reload (path=${importResult.path})`);
             return;
         }
+
+        // 重新查找旧节点（initializeProviderStatus 后旧引用已失效）
+        const refreshedOldProvider = this._findProvider(providerType, oldUuid);
+        if (!refreshedOldProvider) {
+            this._log('error', `[AfterSale] Old provider ${oldUuid} not found after import, cannot complete replace`);
+            return;
+        }
+        const currentOldConfig = refreshedOldProvider.config;
 
         const newConfig = newProviderStatus.config;
 
@@ -2200,27 +2320,28 @@ export class ProviderPoolManager {
             })(),
             subscriptionInfoRaw: newAccount.subscription_info || '',
             startUrl: startUrl,
-            afterSaleExpired: false
+            afterSaleExpired: false,
+            replacedAt: new Date().toISOString()
         };
 
-        // 继承旧节点属性
-        newConfig.weight = oldProviderConfig.weight || 100;
-        newConfig.notSupportedModels = oldProviderConfig.notSupportedModels || [];
-        newConfig.customName = oldProviderConfig.customName || '';
-        newConfig.priority = oldProviderConfig.priority || 0;
+        // 继承旧节点属性（使用重新查找的引用）
+        newConfig.weight = currentOldConfig.weight || 100;
+        newConfig.notSupportedModels = currentOldConfig.notSupportedModels || [];
+        newConfig.customName = currentOldConfig.customName || '';
+        newConfig.priority = currentOldConfig.priority || 0;
         newConfig.replacedFromUuid = oldUuid;
-        newConfig.tags = [];
+        newConfig.tags = [source];
 
-        // 7. 旧节点标记 isReplaced
-        oldProviderConfig.isReplaced = true;
-        oldProviderConfig.replacedByUuid = newConfig.uuid;
-        oldProviderConfig.replacedAt = new Date().toISOString();
+        // 7. 旧节点标记 isReplaced（使用重新查找的引用）
+        currentOldConfig.isReplaced = true;
+        currentOldConfig.replacedByUuid = newConfig.uuid;
+        currentOldConfig.replacedAt = new Date().toISOString();
 
         // 8. 调度自动打标签
         this._scheduleAutoTag(providerType, newConfig);
 
-        // 9. 保存
-        this._debouncedSave(providerType);
+        // 9. 立即保存（不走 debounce，防止 reload-config 竞态导致 afterSaleMeta 丢失）
+        await this._flushImmediately(providerType);
 
         // 9. 广播事件
         broadcastEvent('after_sale_replaced', {

@@ -713,6 +713,7 @@ export async function handleImportAfterSaleCredentials(req, res) {
         }
 
         newNode.importSource = 'auto-after-sale';
+        newNode.tags = ['导入'];
         newNode.afterSaleMeta = {
             orderId,
             deliveryId,
@@ -728,17 +729,16 @@ export async function handleImportAfterSaleCredentials(req, res) {
         logger.info(`[AfterSale] Import success: uuid=${newNode.uuid}, orderId=${orderId}, accountId=${accountId}`);
 
         // 同步更新 ProviderPoolManager 内存状态
+        // 直接用已含 afterSaleMeta 的 poolsData 重新加载，并立即写文件
+        // 防止之前 autoLinkProviderConfigs 触发的 _debouncedSave 覆盖掉 afterSaleMeta
         try {
             const { getProviderPoolManager } = await import('../services/service-manager.js');
             const poolManager = getProviderPoolManager();
             if (poolManager) {
-                const memProvider = poolManager.providerStatus['claude-kiro-oauth']?.find(
-                    p => p.config.uuid === newNode.uuid
-                );
-                if (memProvider) {
-                    memProvider.config.importSource = 'auto-after-sale';
-                    memProvider.config.afterSaleMeta = newNode.afterSaleMeta;
-                }
+                poolManager.providerPools = poolsData;
+                poolManager.initializeProviderStatus();
+                // 立即写文件，清掉 pending debounce（防止旧数据覆盖）
+                await poolManager._flushImmediately('claude-kiro-oauth');
             }
         } catch (e) {
             logger.warn('[AfterSale] Failed to sync memory state:', e.message);
