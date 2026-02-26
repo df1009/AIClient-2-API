@@ -1192,8 +1192,9 @@ export async function handleReplaceBanned(req, res, currentConfig, providerPoolM
         }
     } catch (error) {
         if (error.response?.status === 400) {
+            const errorDetail = error.response?.data?.detail || error.response?.data?.message || error.message;
             res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, message: error.response?.data?.message || error.message }));
+            res.end(JSON.stringify({ success: false, message: errorDetail }));
             return true;
         }
         res.writeHead(500, { 'Content-Type': 'application/json' });
