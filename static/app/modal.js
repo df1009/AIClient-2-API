@@ -387,6 +387,19 @@ function renderProviderList(providers) {
             `;
         }
         
+        // 售后换号错误信息
+        let afterSaleErrorHtml = '';
+        if (provider.afterSaleMeta?.lastReplaceError) {
+            const errorMsg = provider.afterSaleMeta.lastReplaceError;
+            afterSaleErrorHtml = `
+                <div class="provider-error-info" style="background:#fef3c7;border-left:3px solid #f59e0b;">
+                    <i class="fas fa-info-circle" style="color:#f59e0b;"></i>
+                    <span class="error-label">换号失败:</span>
+                    <span class="error-message">${errorMsg}</span>
+                </div>
+            `;
+        }
+        
         // 构建售后标识
         let afterSaleBadgeHtml = '';
         if (provider.importSource === 'auto-after-sale') {
@@ -452,6 +465,7 @@ function renderProviderList(providers) {
                             </span>
                         </div>
                         ${errorInfoHtml}
+                        ${afterSaleErrorHtml}
                     </div>
                     <div class="provider-actions-group">
                         <button class="btn-small ${toggleButtonClass}" onclick="window.toggleProviderStatus('${provider.uuid}', event)" title="${toggleButtonText}此提供商" ${provider.isReplaced ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>

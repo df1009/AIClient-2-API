@@ -2131,15 +2131,40 @@ export class ProviderPoolManager {
                 }
             } catch (error) {
                 const status = error.response?.status;
+                const errorData = error.response?.data;
+                const errorDetail = errorData?.detail || '';
 
                 if (status === 400) {
-                    this._log('warn', `[AfterSale] Replace returned 400 for ${uuid}, marking afterSaleExpired=true`);
-                    providerConfig.afterSaleMeta.afterSaleExpired = true;
-                    providerConfig.afterSaleMeta.expiredReason = 'http_400';
-                    this._debouncedSave(providerType);
-                    this._clearUrgentTimer(uuid);
+                    this._log('warn', `[AfterSale] Replace returned 400 for ${uuid}`);
+                    this._log('warn', `[AfterSale] 400 Error details: ${JSON.stringify(errorData)}`);
+                    
+                    // 保存商城的错误信息到 afterSaleMeta
+                    providerConfig.afterSaleMeta.lastReplaceError = errorDetail;
+                    
+                    // 只有真正过期时才标记 afterSaleExpired=true，库存不足时继续重试
+                    if (errorDetail.includes('质保期') || errorDetail.includes('过期')) {
+                        this._log('warn', `[AfterSale] Warranty expired, marking afterSaleExpired=true`);
+                        providerConfig.afterSaleMeta.afterSaleExpired = true;
+                        providerConfig.afterSaleMeta.expiredReason = 'warranty_expired';
+                        this._debouncedSave(providerType);
+                        this._clearUrgentTimer(uuid);
+                    } else if (errorDetail.includes('库存不足')) {
+                        this._log('warn', `[AfterSale] Out of stock, will retry later`);
+                        // 不标记为过期，继续重试
+                        this._debouncedSave(providerType);
+                    } else {
+                        // 其他 400 错误，标记为过期
+                        this._log('warn', `[AfterSale] Unknown 400 error, marking afterSaleExpired=true`);
+                        providerConfig.afterSaleMeta.afterSaleExpired = true;
+                        providerConfig.afterSaleMeta.expiredReason = 'http_400_unknown';
+                        this._debouncedSave(providerType);
+                        this._clearUrgentTimer(uuid);
+                    }
                 } else {
                     this._log('error', `[AfterSale] Replace failed for ${uuid} (HTTP ${status}): ${error.message}`);
+                    if (errorData) {
+                        this._log('error', `[Ale] Error details: ${JSON.stringify(errorData)}`);
+                    }
                 }
             }
         } finally {
