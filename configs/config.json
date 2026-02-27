@@ -37,6 +37,7 @@
   "AUTO_AFTER_SALE_SHOP_EMAIL": "664791309@qq.com",
   "AUTO_AFTER_SALE_SHOP_PASSWORD": "Df111222",
   "AUTO_AFTER_SALE_REGIONS": [
+    "eu-central-1",
     "us-east-1",
     "eu-north-1"
   ],

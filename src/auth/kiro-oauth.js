@@ -1050,7 +1050,7 @@ export async function importAwsCredentials(credentials, skipDuplicateCheck = fal
             accessToken: credentials.accessToken,
             refreshToken: credentials.refreshToken,
             authMethod: credentials.authMethod || 'builder-id',
-            // region: credentials.region || KIRO_REFRESH_CONSTANTS.DEFAULT_REGION,
+            region: credentials.idcRegion || credentials.region || KIRO_REFRESH_CONSTANTS.IDC_REGION,
             idcRegion: credentials.idcRegion || credentials.region || KIRO_REFRESH_CONSTANTS.IDC_REGION
         };
         
