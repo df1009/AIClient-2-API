@@ -12,6 +12,7 @@ import {
     handleIFlowOAuth,
     handleCodexOAuth,
     batchImportKiroRefreshTokensStream,
+    batchImportCodexCredentialsStream,
     importAwsCredentials
 } from '../auth/oauth-handlers.js';
 
@@ -314,7 +315,7 @@ export async function handleBatchImportGeminiTokens(req, res) {
             (progress) => {
                 sendSSE('progress', progress);
             },
-            skipDuplicateCheck !== false // 默认为 true
+            skipDuplicateCheck === true // 默认为 false
         );
         
         logger.info(`[Gemini Batch Import] Completed: ${result.success} success, ${result.failed} failed`);
@@ -961,6 +962,125 @@ export async function handleGetOrderAccounts(req, res) {
         logger.error('[OrderAccounts] Error:', error);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: error.message }));
+        return true;
+    }
+}
+
+/**
+ * 批量导入 Codex 凭据（带实时进度 SSE）
+ */
+export async function handleBatchImportCodexCredentials(req, res) {
+    try {
+        const body = await getRequestBody(req);
+        const { credentials, skipDuplicateCheck } = body;
+
+        // 验证 credentials 是否为非空数组
+        if (!credentials || !Array.isArray(credentials) || credentials.length === 0) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: false,
+                error: 'credentials array is required and must not be empty'
+            }));
+            return true;
+        }
+
+        // 预验证所有凭据的必需字段
+        const requiredFields = ['access_token', 'refresh_token', 'id_token', 'account_id', 'email', 'type', 'last_refresh', 'expired'];
+        const validationErrors = [];
+
+        for (let i = 0; i < credentials.length; i++) {
+            const cred = credentials[i];
+            const missingFields = requiredFields.filter(field => !cred[field]);
+
+            if (missingFields.length > 0) {
+                validationErrors.push({
+                    index: i + 1,
+                    email: cred.email || 'unknown',
+                    missingFields
+                });
+            }
+        }
+
+        // 如果有验证错误，返回 400
+        if (validationErrors.length > 0) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: false,
+                error: 'Some credentials are missing required fields',
+                validationErrors
+            }));
+            return true;
+        }
+
+        logger.info(`[Codex Batch Import] Starting batch import of ${credentials.length} credentials with SSE...`);
+
+        // 设置 SSE 响应头
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'
+        });
+
+        // 发送 SSE 事件的辅助函数（带错误处理）
+        const sendSSE = (event, data) => {
+            if (!res.writableEnded && !res.destroyed) {
+                try {
+                    res.write(`event: ${event}\n`);
+                    res.write(`data: ${JSON.stringify(data)}\n\n`);
+                } catch (err) {
+                    logger.error('[Codex Batch Import] Failed to write SSE:', err.message);
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        // 发送开始事件
+        sendSSE('start', { total: credentials.length });
+
+        // 执行流式批量导入
+        const result = await batchImportCodexCredentialsStream(
+            credentials,
+            (progress) => {
+                // 每处理完一个凭据发送进度更新
+                sendSSE('progress', progress);
+            },
+            skipDuplicateCheck === true // 默认为 false
+        );
+
+        logger.info(`[Codex Batch Import] Completed: ${result.success} success, ${result.failed} failed`);
+
+        // 发送完成事件
+        sendSSE('complete', {
+            success: true,
+            total: result.total,
+            successCount: result.success,
+            failedCount: result.failed,
+            details: result.details
+        });
+
+        res.end();
+        return true;
+
+    } catch (error) {
+        logger.error('[Codex Batch Import] Error:', error);
+        // 如果已经开始发送 SSE，则发送错误事件
+        if (res.headersSent && !res.writableEnded && !res.destroyed) {
+            try {
+                res.write(`event: error\n`);
+                res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+                res.end();
+            } catch (writeErr) {
+                logger.error('[Codex Batch Import] Failed to write error:', writeErr.message);
+            }
+        } else if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: false,
+                error: error.message
+            }));
+        }
         return true;
     }
 }

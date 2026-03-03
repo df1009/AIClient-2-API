@@ -4,6 +4,7 @@ import { getRequestBody } from '../utils/common.js';
 import { getAllProviderModels, getProviderModels } from '../providers/provider-models.js';
 import { generateUUID, createProviderConfig, formatSystemPath, detectProviderFromPath, addToUsedPaths, isPathUsed, pathsEqual } from '../utils/provider-utils.js';
 import { broadcastEvent } from './event-broadcast.js';
+import { checkAndSetQuotaModels } from '../services/service-manager.js';
 
 /**
  * 获取提供商池摘要
@@ -151,6 +152,12 @@ export async function handleAddProvider(req, res, currentConfig, providerPoolMan
             providerPoolManager.providerPools = providerPools;
             providerPoolManager.initializeProviderStatus();
         }
+
+        // 额度检测（异步非阻塞）
+        checkAndSetQuotaModels(providerType, providerConfig.uuid, providerPoolManager)
+            .catch(err => logger.warn(
+                `[AddProvider] Quota check failed for ${providerConfig.uuid}: ${err.message}`
+            ));
 
         // 广播更新事件
         broadcastEvent('config_update', {
@@ -955,6 +962,14 @@ export async function handleQuickLinkProvider(req, res, currentConfig, providerP
                 providerPoolManager.initializeProviderStatus();
             }
 
+            // 对新关联的 claude-kiro-oauth 节点异步检测额度
+            for (const { providerType, provider } of linkedProviders) {
+                checkAndSetQuotaModels(providerType, provider.uuid, providerPoolManager)
+                    .catch(err => logger.warn(
+                        `[QuickLink] Quota check failed for ${provider.uuid}: ${err.message}`
+                    ));
+            }
+
             // Broadcast update events
             broadcastEvent('config_update', {
                 action: 'quick_link_batch',
@@ -1230,6 +1245,97 @@ export async function handleResetAfterSaleExpired(req, res, currentConfig, provi
     } catch (error) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, message: error.message }));
+        return true;
+    }
+}
+
+/**
+ * 延长质保时间
+ */
+export async function handleExtendWarranty(req, res, currentConfig, providerPoolManager, providerType, providerUuid) {
+    try {
+        const body = await getRequestBody(req);
+        const { days, currentExpireAt } = typeof body === 'string' ? JSON.parse(body) : body;
+
+        if (!days || !currentExpireAt) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: 'days and currentExpireAt are required' }));
+            return true;
+        }
+
+        const parsedDays = parseInt(days, 10);
+        if (isNaN(parsedDays) || parseFloat(days) !== parsedDays) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: '延长天数必须为正整数' }));
+            return true;
+        }
+
+        if (parsedDays < 1 || parsedDays > 90) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: '延长天数必须在 1-90 之间' }));
+            return true;
+        }
+
+        const providers = providerPoolManager.providerStatus[providerType];
+        const provider = providers?.find(p => p.config.uuid === providerUuid);
+        if (!provider) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: 'Provider not found' }));
+            return true;
+        }
+
+        const config = provider.config;
+
+        if (!config.afterSaleMeta || !config.afterSaleMeta.warrantyExpireAt) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: '该节点没有质保信息' }));
+            return true;
+        }
+
+        const actualExpireAt = config.afterSaleMeta.warrantyExpireAt;
+        if (actualExpireAt !== currentExpireAt) {
+            res.writeHead(409, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: '质保到期时间已被修改，请刷新后重试' }));
+            return true;
+        }
+
+        const expireDate = new Date(actualExpireAt);
+        if (isNaN(expireDate.getTime())) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, message: '质保到期时间格式异常' }));
+            return true;
+        }
+
+        const now = new Date();
+        const baseDate = expireDate > now ? expireDate : now;
+        const newExpireDate = new Date(baseDate);
+        newExpireDate.setDate(newExpireDate.getDate() + parsedDays);
+        const newExpireAt = newExpireDate.toISOString();
+
+        config.afterSaleMeta.warrantyExpireAt = newExpireAt;
+        config.afterSaleMeta.afterSaleExpired = false;
+        providerPoolManager._flushImmediately(providerType);
+
+        broadcastEvent('provider_update', {
+            action: 'extend_warranty',
+            providerType,
+            providerUuid,
+            oldExpireAt: actualExpireAt,
+            newExpireAt,
+            timestamp: new Date().toISOString()
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            success: true,
+            message: `质保已延长 ${parsedDays} 天`,
+            oldExpireAt: actualExpireAt,
+            newExpireAt
+        }));
+        return true;
+    } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, message: error.message || '延长质保失败' }));
         return true;
     }
 }

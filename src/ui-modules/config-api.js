@@ -4,7 +4,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { CONFIG } from '../core/config-manager.js';
 import { serviceInstances } from '../providers/adapter.js';
-import { initApiService } from '../services/service-manager.js';
+import { initApiService, checkAndSetQuotaModels } from '../services/service-manager.js';
 import { getRequestBody } from '../utils/common.js';
 import { broadcastEvent } from '../ui-modules/event-broadcast.js';
 
@@ -24,6 +24,17 @@ export async function reloadConfig(providerPoolManager) {
         if (providerPoolManager) {
             providerPoolManager.providerPools = newConfig.providerPools;
             providerPoolManager.initializeProviderStatus();
+            
+            // 配置重新加载后，对所有 kiro 节点执行配额检查
+            if (newConfig.providerPools && newConfig.providerPools['claude-kiro-oauth']) {
+                const kiroNodes = newConfig.providerPools['claude-kiro-oauth'];
+                for (const node of kiroNodes) {
+                    checkAndSetQuotaModels('claude-kiro-oauth', node.uuid, providerPoolManager)
+                        .catch(err => logger.warn(
+                            `[ConfigReload] Quota check failed for ${node.uuid}: ${err.message}`
+                        ));
+                }
+            }
         }
         
         // Update global CONFIG

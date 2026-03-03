@@ -238,6 +238,14 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
         return await providerApi.handleResetAfterSaleExpired(req, res, currentConfig, providerPoolManager, providerType, providerUuid);
     }
 
+    // Extend warranty for specific provider
+    const extendWarrantyMatch = pathParam.match(/^\/api\/providers\/([^\/]+)\/([^\/]+)\/extend-warranty$/);
+    if (method === 'POST' && extendWarrantyMatch) {
+        const providerType = decodeURIComponent(extendWarrantyMatch[1]);
+        const providerUuid = extendWarrantyMatch[2];
+        return await providerApi.handleExtendWarranty(req, res, currentConfig, providerPoolManager, providerType, providerUuid);
+    }
+
     // Set/Add tags for specific provider
     const tagsMatch = pathParam.match(/^\/api\/providers\/([^\/]+)\/([^\/]+)\/tags$/);
     if ((method === 'PUT' || method === 'POST') && tagsMatch) {
@@ -371,6 +379,10 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
 
     if (method === 'POST' && pathParam === '/api/gemini/batch-import-tokens') {
         return await oauthApi.handleBatchImportGeminiTokens(req, res);
+    }
+
+    if (method === 'POST' && pathParam === '/api/codex/batch-import') {
+        return await oauthApi.handleBatchImportCodexCredentials(req, res);
     }
 
     // Import AWS SSO credentials for Kiro

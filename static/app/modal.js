@@ -415,6 +415,17 @@ function renderProviderList(providers) {
                         <i class="fas fa-shield-alt" style="color:#10b981;"></i>
                         <span class="error-label">质保剩余:</span>
                         <span class="error-message">${hours}小时${minutes}分钟 (到期时间: ${new Date(expireTime).toLocaleString()})</span>
+                        <div style="display:inline-flex;align-items:center;margin-left:12px;gap:4px;">
+                            <input type="number" min="1" max="90" placeholder="天数"
+                                class="extend-warranty-input"
+                                data-expire-at="${provider.afterSaleMeta.warrantyExpireAt}"
+                                style="width:60px;padding:2px 4px;border:1px solid #d1d5db;border-radius:4px;font-size:12px;" />
+                            <button class="btn-small btn-success"
+                                onclick="window.extendWarranty('${currentProviderType}', '${provider.uuid}', event)"
+                                style="font-size:11px;padding:2px 8px;">
+                                <i class="fas fa-calendar-plus"></i> 延长质保
+                            </button>
+                        </div>
                     </div>
                 `;
             } else {
@@ -423,6 +434,17 @@ function renderProviderList(providers) {
                         <i class="fas fa-exclamation-triangle" style="color:#ef4444;"></i>
                         <span class="error-label">质保状态:</span>
                         <span class="error-message">已过期 (到期时间: ${new Date(expireTime).toLocaleString()})</span>
+                        <div style="display:inline-flex;align-items:center;margin-left:12px;gap:4px;">
+                            <input type="number" min="1" max="90" placeholder="天数"
+                                class="extend-warranty-input"
+                                data-expire-at="${provider.afterSaleMeta.warrantyExpireAt}"
+                                style="width:60px;padding:2px 4px;border:1px solid #d1d5db;border-radius:4px;font-size:12px;" />
+                            <button class="btn-small btn-success"
+                                onclick="window.extendWarranty('${currentProviderType}', '${provider.uuid}', event)"
+                                style="font-size:11px;padding:2px 8px;">
+                                <i class="fas fa-calendar-plus"></i> 延长质保
+                            </button>
+                        </div>
                     </div>
                 `;
             }

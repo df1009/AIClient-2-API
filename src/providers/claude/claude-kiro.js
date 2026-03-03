@@ -352,6 +352,7 @@ export class KiroApiService {
         this.credsBase64 = config.KIRO_OAUTH_CREDS_BASE64;
         this.useSystemProxy = config?.USE_SYSTEM_PROXY_KIRO ?? false;
         this.uuid = config?.uuid; // 获取多节点配置的 uuid
+        this.availableModels = []; // 可用模型列表
         logger.info(`[Kiro] System proxy ${this.useSystemProxy ? 'enabled' : 'disabled'}`);
         // this.accessToken = config.KIRO_ACCESS_TOKEN;
         // this.refreshToken = config.KIRO_REFRESH_TOKEN;
@@ -2703,11 +2704,84 @@ async saveCredentialsToFile(filePath, newData) {
      * List available models
      */
     async listModels() {
-        const models = KIRO_MODELS.map(id => ({
+        // 如果还没有获取可用模型，使用默认列表
+        const modelList = this.availableModels.length > 0 ? this.availableModels : KIRO_MODELS;
+        const models = modelList.map(id => ({
             name: id
         }));
 
         return { models: models };
+    }
+
+    /**
+     * 获取可用模型列表
+     * 根据配额限制自动禁用部分模型：
+     * - limitCount < 800: 只保留基础模型（haiku-4-5, sonnet-4-5）
+     * - limitCount >= 800: 启用所有模型
+     */
+    async fetchAvailableModels() {
+        logger.info('[Kiro] Fetching available models...');
+        
+        // 确保已初始化（但不要在 initialize 中调用此方法，避免循环）
+        if (!this.isInitialized) {
+            logger.warn('[Kiro] Service not initialized, skipping model fetch');
+            this.availableModels = KIRO_MODELS;
+            return;
+        }
+        
+        try {
+            // 直接调用 getUsageLimits 的核心逻辑，避免再次检查 isInitialized
+            const resourceType = 'AGENTIC_REQUEST';
+            let usageLimitsUrl = this.baseUrl;
+            usageLimitsUrl = usageLimitsUrl.replace('generateAssistantResponse', 'getUsageLimits');
+            const params = new URLSearchParams({
+                isEmailRequired: 'true',
+                origin: KIRO_CONSTANTS.ORIGIN_AI_EDITOR,
+                resourceType: resourceType
+            });
+            if (this.authMethod === KIRO_CONSTANTS.AUTH_METHOD_SOCIAL && this.profileArn) {
+                params.append('profileArn', this.profileArn);
+            }
+            const fullUrl = `${usageLimitsUrl}?${params.toString()}`;
+
+            const machineId = generateMachineIdFromConfig({
+                uuid: this.uuid,
+                profileArn: this.profileArn,
+                clientId: this.clientId
+            });
+            const kiroVersion = KIRO_CONSTANTS.KIRO_VERSION;
+            const { osName, nodeVersion } = getSystemRuntimeInfo();
+
+            const headers = {
+                'Authorization': `Bearer ${this.accessToken}`,
+                'x-amz-user-agent': `aws-sdk-js/1.0.0 KiroIDE-${kiroVersion}-${machineId}`,
+                'user-agent': `aws-sdk-js/1.0.0 ua/2.1 os/${osName} lang/js md/nodejs#${nodeVersion} api/codewhispererruntime#1.0.0 m/E KiroIDE-${kiroVersion}-${machineId}`,
+                'amz-sdk-invocation-id': uuidv4(),
+                'amz-sdk-request': 'attempt=1; max=1',
+                'Connection': 'close'
+            };
+
+            const response = await this.axiosInstance.get(fullUrl, { headers });
+            const usageLimits = response.data;
+            
+            // 根据总配额限制过滤模型
+            const limitCount = usageLimits?.limitCount || 0;
+            
+            if (limitCount < 800) {
+                // 低配额账号：只保留基础模型
+                const basicModels = ['claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-sonnet-4-5-20250929'];
+                this.availableModels = KIRO_MODELS.filter(model => basicModels.includes(model));
+                logger.info(`[Kiro] Low quota account (${limitCount}), enabled basic models only: [${this.availableModels.join(', ')}]`);
+            } else {
+                // 高配额账号：启用所有模型
+                this.availableModels = KIRO_MODELS;
+                logger.info(`[Kiro] High quota account (${limitCount}), all models available: [${this.availableModels.join(', ')}]`);
+            }
+        } catch (error) {
+            logger.warn('[Kiro] Failed to fetch available models, using default list:', error.message);
+            // 如果查询失败，使用默认模型列表
+            this.availableModels = KIRO_MODELS;
+        }
     }
 
     /**

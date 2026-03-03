@@ -879,3 +879,234 @@ export async function handleCodexOAuthCallback(code, state) {
         };
     }
 }
+
+/**
+ * 检查 Codex 凭据是否重复
+ * @param {string} refreshToken - refresh_token
+ * @param {string} email - 邮箱地址
+ * @param {string} accountId - 账户 ID
+ * @returns {Promise<Object>} { isDuplicate: boolean, existingPath?: string }
+ */
+export async function checkCodexCredentialsDuplicate(refreshToken, email = null, accountId = null) {
+    const codexDir = path.join(process.cwd(), 'configs', 'codex');
+
+    try {
+        // 检查 configs/codex 目录是否存在
+        if (!fs.existsSync(codexDir)) {
+            return { isDuplicate: false };
+        }
+
+        // 递归扫描所有 JSON 文件
+        const scanDirectory = async (dirPath) => {
+            const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+
+            for (const entry of entries) {
+                const fullPath = path.join(dirPath, entry.name);
+
+                if (entry.isDirectory()) {
+                    const result = await scanDirectory(fullPath);
+                    if (result.isDuplicate) {
+                        return result;
+                    }
+                } else if (entry.isFile() && entry.name.endsWith('.json')) {
+                    try {
+                        const content = await fs.promises.readFile(fullPath, 'utf8');
+                        const credentials = JSON.parse(content);
+
+                        // 主要检查: refresh_token 是否匹配
+                        if (credentials.refresh_token && credentials.refresh_token === refreshToken) {
+                            const relativePath = path.relative(process.cwd(), fullPath);
+                            logger.info(`${CODEX_OAUTH_CONFIG.logPrefix} Found duplicate refresh_token in: ${relativePath}`);
+                            return {
+                                isDuplicate: true,
+                                existingPath: relativePath
+                            };
+                        }
+
+                        // 次要检查: email + account_id 组合匹配
+                        if (email && accountId &&
+                            credentials.email === email &&
+                            credentials.account_id === accountId) {
+                            const relativePath = path.relative(process.cwd(), fullPath);
+                            logger.info(`${CODEX_OAUTH_CONFIG.logPrefix} Found duplicate email+account_id in: ${relativePath}`);
+                            return {
+                                isDuplicate: true,
+                                existingPath: relativePath
+                            };
+                        }
+                    } catch (parseError) {
+                        // 忽略解析错误的文件
+                    }
+                }
+            }
+
+            return { isDuplicate: false };
+        };
+
+        return await scanDirectory(codexDir);
+    } catch (error) {
+        logger.warn(`${CODEX_OAUTH_CONFIG.logPrefix} Error checking duplicates:`, error.message);
+        return { isDuplicate: false };
+    }
+}
+
+/**
+ * 批量导入 Codex 凭据（流式处理）
+ * @param {Array} credentials - 凭据数组，每个凭据需包含完整的 Codex OAuth 字段
+ * @param {Function} onProgress - 进度回调函数
+ * @param {boolean} skipDuplicateCheck - 是否跳过重复检查 (默认: false)
+ * @returns {Promise<Object>} 批量处理结果
+ */
+export async function batchImportCodexCredentialsStream(credentials, onProgress = null, skipDuplicateCheck = false) {
+    const results = {
+        total: credentials.length,
+        success: 0,
+        failed: 0,
+        details: []
+    };
+
+    for (let i = 0; i < credentials.length; i++) {
+        const cred = credentials[i];
+        const progressData = {
+            index: i + 1,
+            total: credentials.length,
+            current: null
+        };
+
+        // 验证凭据类型
+        if (cred.type !== 'codex') {
+            progressData.current = {
+                index: i + 1,
+                email: cred.email || 'unknown',
+                success: false,
+                error: 'Invalid credential type (must be "codex")'
+            };
+            results.details.push(progressData.current);
+            results.failed++;
+
+            if (onProgress) {
+                onProgress({
+                    ...progressData,
+                    successCount: results.success,
+                    failedCount: results.failed
+                });
+            }
+            continue;
+        }
+
+        // 验证必需字段
+        const requiredFields = ['access_token', 'refresh_token', 'id_token', 'account_id', 'email', 'type', 'last_refresh', 'expired'];
+        const missingFields = requiredFields.filter(field => !cred[field]);
+
+        if (missingFields.length > 0) {
+            progressData.current = {
+                index: i + 1,
+                email: cred.email || 'unknown',
+                success: false,
+                error: `Missing required fields: ${missingFields.join(', ')}`
+            };
+            results.details.push(progressData.current);
+            results.failed++;
+
+            if (onProgress) {
+                onProgress({
+                    ...progressData,
+                    successCount: results.success,
+                    failedCount: results.failed
+                });
+            }
+            continue;
+        }
+
+        // 检查重复
+        if (!skipDuplicateCheck) {
+            const duplicateCheck = await checkCodexCredentialsDuplicate(cred.refresh_token, cred.email, cred.account_id);
+            if (duplicateCheck.isDuplicate) {
+                progressData.current = {
+                    index: i + 1,
+                    email: cred.email,
+                    success: false,
+                    error: 'duplicate',
+                    existingPath: duplicateCheck.existingPath
+                };
+                results.details.push(progressData.current);
+                results.failed++;
+
+                if (onProgress) {
+                    onProgress({
+                        ...progressData,
+                        successCount: results.success,
+                        failedCount: results.failed
+                    });
+                }
+                continue;
+            }
+        }
+
+        try {
+            logger.info(`${CODEX_OAUTH_CONFIG.logPrefix} Importing credential ${i + 1}/${credentials.length} (${cred.email})...`);
+
+            // 生成文件路径: cox/{timestamp}_codex-{email}.json
+            const timestamp = Date.now();
+            const targetDir = path.join(process.cwd(), 'configs', 'codex');
+            await fs.promises.mkdir(targetDir, { recursive: true });
+
+            const filename = `${timestamp}_${i}_codex-${cred.email}.json`;
+            const credPath = path.join(targetDir, filename);
+
+            // 保存凭据文件（权限 0o600）
+            await fs.promises.writeFile(credPath, JSON.stringify(cred, null, 2), { mode: 0o600 });
+
+            const relativePath = path.relative(process.cwd(), credPath);
+            logger.info(`${CODEX_OAUTH_CONFIG.logPrefix} Credential ${i + 1} saved: ${relativePath}`);
+
+            // 自动关联到 Pools
+            await autoLinkProviderConfigs(CONFIG, {
+                onlyCurrentCred: true,
+                credPath: relativePath
+            });
+
+            progressData.current = {
+                index: i + 1,
+                email: cred.email,
+                success: true,
+                path: relativePath,
+                accountId: cred.account_id
+            };
+            results.details.push(progressData.current);
+            results.success++;
+
+        } catch (error) {
+            logger.error(`${CODEX_OAUTH_CONFIG.logPrefix} Credential ${i + 1} import failed:`, error.message);
+
+            progressData.current = {
+                index: i + 1,
+                email: cred.email || 'unknown',
+                success: false,
+                error: error.message
+            };
+            results.details.push(progressData.current);
+            results.failed++;
+        }
+
+        // 发送进度更新
+        if (onProgress) {
+            onProgress({
+                ...progressData,
+                successCount: results.success,
+                failedCount: results.failed
+            });
+        }
+    }
+
+    // 如果有成功的，广播事件
+    if (results.success > 0) {
+        broadcastEvent('oauth_batch_success', {
+            provider: 'openai-codex-oauth',
+            count: results.success,
+            timestamp: new Date().toISOString()
+        });
+    }
+
+    return results;
+}

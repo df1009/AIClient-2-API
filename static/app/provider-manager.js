@@ -486,6 +486,12 @@ async function handleGenerateAuthUrl(providerType) {
         return;
     }
 
+    // 如果是 Codex OAuth，显示认证方式选择对话框
+    if (providerType === 'openai-codex-oauth') {
+        showCodexAuthMethodSelector(providerType);
+        return;
+    }
+
     await executeGenerateAuthUrl(providerType, {});
 }
 
@@ -949,6 +955,416 @@ function showGeminiBatchImportModal(providerType) {
             } else {
                 submitBtn.innerHTML = `<i class="fas fa-check-circle"></i> <span>${t('common.success')}</span>`;
             }
+        }
+    });
+}
+
+/**
+ * 显示 Codex OAuth 认证方式选择对话框
+ * @param {string} providerType - 提供商类型
+ */
+function showCodexAuthMethodSelector(providerType) {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.style.display = 'flex';
+
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3><i class="fas fa-key"></i> <span data-i18n="oauth.codex.selectMethod">${t('oauth.codex.selectMethod')}</span></h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="auth-method-options" style="display: flex; flex-direction: column; gap: 12px;">
+                    <button class="auth-method-btn" data-method="oauth" style="display: flex; align-items: center; gap: 12px; padding: 16px; border: 2px solid #e0e0e0; border-radius: 8px; background: white; cursor: pointer; transition: all 0.2s;">
+                        <i class="fas fa-robot" style="font-size: 24px; color: #10a37f;"></i>
+                        <div style="text-align: left;">
+                            <div style="font-weight: 600; color: #333;" data-i18n="oauth.codex.oauth">${t('oauth.codex.oauth')}</div>
+                            <div style="font-size: 12px; color: #666;" data-i18n="oauth.codex.oauthDesc">${t('oauth.codex.oauthDesc')}</div>
+                        </div>
+                    </button>
+                    <button class="auth-method-btn" data-method="batch-import" style="display: flex; align-items: center; gap: 12px; padding: 16px; border: 2px solid #e0e0e0; border-radius: 8px; background: white; cursor: pointer; transition: all 0.2s;">
+                        <i class="fas fa-file-import" style="font-size: 24px; color: #10b981;"></i>
+                        <div style="text-align: left;">
+                            <div style="font-weight: 600; color: #333;" data-i18n="oauth.codex.batchImport">${t('oauth.codex.batchImport')}</div>
+                            <div style="font-size: 12px; color: #666;" data-i18n="oauth.codex.batchImportDesc">${t('oauth.codex.batchImportDesc')}</div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-cancel" data-i18n="modal.provider.cancel">${t('modal.provider.cancel')}</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // 关闭按钮事件
+    const closeBtn = modal.querySelector('.modal-close');
+    const cancelBtn = modal.querySelector('.modal-cancel');
+    [closeBtn, cancelBtn].forEach(btn => {
+        btn.addEventListener('click', () => {
+            modal.remove();
+        });
+    });
+
+    // 认证方式选择按钮事件
+    const methodBtns = modal.querySelectorAll('.auth-method-btn');
+    methodBtns.forEach(btn => {
+        btn.addEventListener('mouseenter', () => {
+            btn.style.borderColor = '#10a37f';
+            btn.style.background = '#f0fdf4';
+        });
+        btn.addEventListener('mouseleave', () => {
+            btn.style.borderColor = '#e0e0e0';
+            btn.style.background = 'white';
+        });
+        btn.addEventListener('click', async () => {
+            const method = btn.dataset.method;
+            modal.remove();
+
+            if (method === 'batch-import') {
+                showCodexBatchImportModal();
+            } else {
+                await executeGenerateAuthUrl(providerType, {});
+            }
+        });
+    });
+}
+
+/**
+ * 显示 Codex 批量导入模态框
+ */
+function showCodexBatchImportModal() {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.style.display = 'flex';
+
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 600px;">
+            <div class="modal-header">
+                <h3><i class="fas fa-file-import"></i> <span data-i18n="oauth.codex.batchImport">${t('oauth.codex.batchImport')}</span></h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="batch-import-instructions" style="margin-bottom: 16px; padding: 12px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px;">
+                    <p style="margin: 0; font-size: 14px; color: #065f46;">
+                        <i class="fas fa-info-circle"></i>
+                        <span data-i18n="oauth.codex.importInstructions">${t('oauth.codex.importInstructions')}</span>
+                    </p>
+                </div>
+                <div class="form-group">
+                    <label for="codexBatchCredentials" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">
+                        <span data-i18n="oauth.codex.jsonLabel">${t('oauth.codex.jsonLabel')}</span>
+                    </label>
+                    <textarea
+                        id="codexBatchCredentials"
+                        rows="10"
+                        style="width: 100%; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; font-family: monospace; font-size: 13px; resize: vertical;"
+                        placeholder="${t('oauth.codex.jsonPlaceholder')}"
+                        data-i18n-placeholder="oauth.codex.jsonPlaceholder"
+                    ></textarea>
+                </div>
+                <div class="form-group" style="margin-top: 12px;">
+                    <label for="codexBatchFiles" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">
+                        <span data-i18n="oauth.codex.fileLabel">${t('oauth.codex.fileLabel')}</span>
+                    </label>
+                    <input type="file" id="codexBatchFiles" multiple accept=".json" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 8px;">
+                </div>
+                <div style="margin-top: 12px;">
+                    <button class="btn-link" id="showCodexJsonExample" style="font-size: 13px; color: #10a37f; cursor: pointer; border: none; background: none; padding: 0;">
+                        <i class="fas fa-code"></i>
+                        <span data-i18n="oauth.codex.jsonExample">${t('oauth.codex.jsonExample')}</span>
+                    </button>
+                </div>
+                <div id="codexJsonExample" style="display: none; margin-top: 12px; padding: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; font-family: monospace; font-size: 12px; white-space: pre-wrap; overflow-x: auto;">
+[
+  {
+    "access_token": "eyJhbGc...",
+    "refresh_token": "v1.MQ...",
+    "id_token": "eyJhbGc...",
+    "account_id": "user-abc123",
+    "email": "user@example.com",
+    "type": "codex",
+    "last_refresh": "2024-01-01T00:00:00.000Z",
+    "expired": "2024-01-01T01:00:00.000Z"
+  }
+]
+                </div>
+                <div class="batch-import-stats" id="codexBatchImportStats" style="display: none; margin-top: 12px; padding: 12px; background: #f3f4f6; border-radius: 8px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span data-i18n="oauth.codex.credentialCount">${t('oauth.codex.credentialCount')}</span>
+                        <span id="codexCredentialCountValue" style="font-weight: 600;">0</span>
+                    </div>
+                </div>
+                <div class="batch-import-progress" id="codexBatchImportProgress" style="display: none; margin-top: 16px;">
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                        <i class="fas fa-spinner fa-spin" style="color: #10a37f;"></i>
+                        <span id="codexImportProgressText" data-i18n="oauth.codex.importing">${t('oauth.codex.importing')}</span>
+                    </div>
+                    <div class="progress-bar" style="height: 8px; background: #e5e7eb; border-radius: 4px; overflow: hidden;">
+                        <div id="codexImportProgressBar" style="height: 100%; width: 0%; background: #10a37f; transition: width 0.3s;"></div>
+                    </div>
+                    <div id="codexProgressDetails" style="margin-top: 12px; max-height: 200px; overflow-y: auto; font-size: 13px;"></div>
+                </div>
+                <div class="batch-import-result" id="codexBatchImportResult" style="display: none; margin-top: 16px; padding: 12px; border-radius: 8px;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-cancel" data-i18n="modal.provider.cancel">${t('modal.provider.cancel')}</button>
+                <button class="btn btn-primary batch-import-submit" id="codexBatchImportSubmit">
+                    <i class="fas fa-upload"></i>
+                    <span data-i18n="oauth.codex.startImport">${t('oauth.codex.startImport')}</span>
+                </button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const textarea = modal.querySelector('#codexBatchCredentials');
+    const fileInput = modal.querySelector('#codexBatchFiles');
+    const statsDiv = modal.querySelector('#codexBatchImportStats');
+    const credentialCountValue = modal.querySelector('#codexCredentialCountValue');
+    const progressDiv = modal.querySelector('#codexBatchImportProgress');
+    const progressBar = modal.querySelector('#codexImportProgressBar');
+    const progressText = modal.querySelector('#codexImportProgressText');
+    const progressDetails = modal.querySelector('#codexProgressDetails');
+    const resultDiv = modal.querySelector('#codexBatchImportResult');
+    const submitBtn = modal.querySelector('#codexBatchImportSubmit');
+    const closeBtn = modal.querySelector('.modal-close');
+    const cancelBtn = modal.querySelector('.modal-cancel');
+    const showExampleBtn = modal.querySelector('#showCodexJsonExample');
+    const exampleDiv = modal.querySelector('#codexJsonExample');
+
+    // 显示/隐藏 JSON 示例
+    showExampleBtn.addEventListener('click', () => {
+        exampleDiv.style.display = exampleDiv.style.display === 'none' ? 'block' : 'none';
+    });
+
+    // 解析凭据的辅助函数
+    const parseCredentials = async () => {
+        let credentials = [];
+
+        // 从 textarea 解析
+        const textValue = textarea.value.trim();
+        if (textValue) {
+            try {
+                const parsed = JSON.parse(textValue);
+                credentials = Array.isArray(parsed) ? parsed : [parsed];
+            } catch (e) {
+                // JSON 格式错误，尝试按行分割解析
+                try {
+                    const lines = textValue.split('\n').filter(line => line.trim());
+                    for (const line of lines) {
+                        const parsed = JSON.parse(line.trim());
+                        credentials.push(parsed);
+                    }
+                } catch (e2) {
+                    // 尝试包装为数组
+                    try {
+                        const wrapped = "[" + textValue.replace(/}\s*{/g, "},{") + "]";
+                        const parsed = JSON.parse(wrapped);
+                        credentials = Array.isArray(parsed) ? parsed : [parsed];
+                    } catch (e3) {
+                        // JSON 格式错误，显示在统计区域
+                        statsDiv.style.display = 'block';
+                        credentialCountValue.textContent = 'JSON 格式错误';
+                        credentialCountValue.style.color = '#ef4444';
+                    }
+                }
+            }
+        }
+
+        // 从文件解析
+        if (fileInput.files.length > 0) {
+            for (const file of fileInput.files) {
+                try {
+                    const content = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = (e) => resolve(e.target.result);
+                        reader.onerror = reject;
+                        reader.readAsText(file);
+                    });
+                    const parsed = JSON.parse(content);
+                    const fileCreds = Array.isArray(parsed) ? parsed : [parsed];
+                    credentials.push(...fileCreds);
+                } catch (e) {
+                    console.error(`Failed to parse file ${file.name}:`, e);
+                }
+            }
+        }
+
+        return credentials;
+    };
+
+    // 实时统计凭据数量
+    const updateStats = async () => {
+        const credentials = await parseCredentials();
+        if (credentials.length > 0) {
+            statsDiv.style.display = 'block';
+            credentialCountValue.textContent = credentials.length;
+            credentialCountValue.style.color = "";
+        } else {
+            statsDiv.style.display = 'none';
+        }
+        submitBtn.disabled = (credentials.length === 0);
+    };
+    textarea.addEventListener('input', updateStats);
+    fileInput.addEventListener('change', updateStats);
+
+    // 关闭按钮事件
+    [closeBtn, cancelBtn].forEach(btn => {
+        btn.addEventListener('click', () => {
+            modal.remove();
+        });
+    });
+
+    // 提交按钮事件
+    submitBtn.addEventListener('click', async () => {
+        const credentials = await parseCredentials();
+
+        if (credentials.length === 0) {
+            showToast(t('common.error'), t('oauth.codex.noCredentials'), 'error');
+            return;
+        }
+
+        // 禁用输入和按钮
+        textarea.disabled = true;
+        fileInput.disabled = true;
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> <span data-i18n="oauth.codex.importing">${t('oauth.codex.importing')}</span>`;
+
+        // 显示进度
+        progressDiv.style.display = 'block';
+        progressDetails.innerHTML = '';
+        resultDiv.style.display = 'none';
+
+        try {
+            const response = await fetch('/api/codex/batch-import', {
+                method: 'POST',
+                headers: window.apiClient ? window.apiClient.getAuthHeaders() : {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ credentials, skipDuplicateCheck: false })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Import failed');
+            }
+
+            // 处理 SSE 流
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let importSuccess = false;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+
+                let eventType = '';
+                let eventData = '';
+
+                for (const line of lines) {
+                    if (line.startsWith('event: ')) {
+                        eventType = line.substring(7).trim();
+                    } else if (line.startsWith('data: ')) {
+                        eventData = line.substring(6).trim();
+
+                        if (eventType && eventData) {
+                            const data = JSON.parse(eventData);
+                            const event = eventType;
+                            eventType = '';
+                            eventData = '';
+
+                            if (event === 'start') {
+                                progressText.textContent = t('oauth.codex.importingProgress', { current: 0, total: data.total });
+                            } else if (event === 'progress') {
+                                const percent = (data.index / data.total) * 100;
+                                progressBar.style.width = `${percent}%`;
+                                progressText.textContent = t('oauth.codex.importingProgress', { current: data.index, total: data.total });
+
+                                if (data.current) {
+                                    const item = document.createElement('div');
+                                    item.style.padding = '4px 0';
+
+                                    if (data.current.success) {
+                                        item.innerHTML = `<i class="fas fa-check-circle" style="color: #10b981;"></i> Credential ${data.current.index} (${data.current.email}): ✓`;
+                                        item.style.color = '#10b981';
+                                    } else if (data.current.error === 'duplicate') {
+                                        item.innerHTML = `<i class="fas fa-exclamation-triangle" style="color: #f59e0b;"></i> Credential ${data.current.index} (${data.current.email}): ⚠ ${t('oauth.codex.duplicateCredential')}`;
+                                        item.style.color = '#f59e0b';
+                                    } else {
+                                        item.innerHTML = `<i class="fas fa-times-circle" style="color: #ef4444;"></i> Credential ${data.current.index} (${data.current.email}): ✗ ${data.current.error}`;
+                                        item.style.color = '#ef4444';
+                                    }
+
+                                    progressDetails.appendChild(item);
+                                    progressDetails.scrollTop = progressDetails.scrollHeight;
+                                }
+                            } else if (event === 'complete') {
+                                progressBar.style.width = '100%';
+                                importSuccess = true;
+
+                                resultDiv.style.display = 'block';
+                                if (data.successCount === data.total) {
+                                    resultDiv.style.background = '#d1fae5';
+                                    resultDiv.style.border = '1px solid #6ee7b7';
+                                    resultDiv.style.color = '#065f46';
+                                    resultDiv.innerHTML = `<i class="fas fa-check-circle"></i> ${t('oauth.codex.importSuccess', { count: data.successCount })}`;
+                                    showToast(t('oauth.codex.importSuccess', { count: data.successCount }), 'success');
+                                } else if (data.successCount === 0) {
+                                    resultDiv.style.background = '#fee2e2';
+                                    resultDiv.style.border = '1px solid #fca5a5';
+                                    resultDiv.style.color = '#991b1b';
+                                    resultDiv.innerHTML = `<i class="fas fa-times-circle"></i> ${t('oauth.codex.importAllFailed', { count: data.total })}`;
+                                    showToast(t('oauth.codex.importAllFailed', { count: data.total }), 'error');
+                                } else {
+                                    resultDiv.style.background = '#fef3c7';
+                                    resultDiv.style.border = '1px solid #fcd34d';
+                                    resultDiv.style.color = '#92400e';
+                                    resultDiv.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${t('oauth.codex.importPartial', { success: data.successCount, failed: data.failedCount })}`;
+                                    showToast(t('oauth.codex.importPartial', { success: data.successCount, failed: data.failedCount }), 'warning');
+                                }
+
+                                // 刷新提供商列表
+                                await loadProviders();
+                                loadConfigList();
+                            } else if (event === 'error') {
+                                throw new Error(data.error);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!importSuccess) {
+                textarea.disabled = false;
+                fileInput.disabled = false;
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = `<i class="fas fa-upload"></i> <span data-i18n="oauth.codex.startImport">${t('oauth.codex.startImport')}</span>`;
+            } else {
+                submitBtn.innerHTML = `<i class="fas fa-check-circle"></i> <span>${t('common.success')}</span>`;
+            }
+        } catch (error) {
+            console.error('Codex batch import error:', error);
+            resultDiv.style.display = 'block';
+            resultDiv.style.background = '#fee2e2';
+            resultDiv.style.border = '1px solid #fca5a5';
+            resultDiv.style.color = '#991b1b';
+            resultDiv.innerHTML = `<i class="fas fa-times-circle"></i> ${t('oauth.codex.importError')}: ${error.message}`;
+            showToast(t('common.error'), t('oauth.codex.importError'), 'error');
+
+            textarea.disabled = false;
+            fileInput.disabled = false;
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = `<i class="fas fa-upload"></i> <span data-i18n="oauth.codex.startImport">${t('oauth.codex.startImport')}</span>`;
         }
     });
 }
@@ -3155,6 +3571,37 @@ window.resetAfterSaleExpired = async function(providerType, uuid, event) {
             btn.disabled = false;
             btn.querySelector('i').className = 'fa-solid fa-arrow-rotate-left';
         }
+    }
+};
+
+window.extendWarranty = async function(providerType, uuid, event) {
+    const btn = event.currentTarget;
+    const container = btn.closest("div");
+    const input = container.querySelector("input.extend-warranty-input");
+    const days = parseInt(input.value, 10);
+    if (isNaN(days) || days < 1 || days > 90 || parseFloat(input.value) !== days) {
+        showToast("错误", "请输入 1-90 的整数天数", "error");
+        return;
+    }
+    const currentExpireAt = input.dataset.expireAt;
+    if (!confirm(`确定要将质保延长 ${days} 天吗？`)) return;
+    btn.disabled = true;
+    btn.querySelector("i").className = "fas fa-spinner fa-spin";
+    try {
+        const response = await window.apiClient.post(
+            `/providers/${encodeURIComponent(providerType)}/${uuid}/extend-warranty`,
+            { days, currentExpireAt }
+        );
+        if (response.success) {
+            showToast("成功", response.message, "success");
+        } else {
+            showToast("错误", response.message, "error");
+        }
+    } catch (err) {
+        showToast("错误", err.message || "延长质保失败", "error");
+    } finally {
+        btn.disabled = false;
+        btn.querySelector("i").className = "fas fa-calendar-plus";
     }
 };
 

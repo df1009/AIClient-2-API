@@ -7,6 +7,7 @@ import { getProviderModels } from './provider-models.js';
 import { broadcastEvent } from '../ui-modules/event-broadcast.js';
 import axios from 'axios';
 import { AfterSaleShopClient } from '../auth/after-sale-shop-client.js';
+import { checkAndSetQuotaModels } from '../services/service-manager.js';
 
 /**
  * Weighted-Random + LRU hybrid selection algorithm.
@@ -469,6 +470,16 @@ export class ProviderPoolManager {
                 force ? await serviceAdapter.forceRefreshToken() : await serviceAdapter.refreshToken() 
                 const duration = Date.now() - startTime;
                 this._log('info', `Token refresh successful for node ${providerStatus.uuid} (Duration: ${duration}ms)`);
+                
+                // 刷新成功后，检查可用模型（仅针对 kiro）
+                if (providerType === 'claude-kiro-oauth' && typeof serviceAdapter.fetchAvailableModels === 'function') {
+                    try {
+                        await serviceAdapter.fetchAvailableModels();
+                        this._log('info', `Model availability check completed for node ${providerStatus.uuid}`);
+                    } catch (modelError) {
+                        this._log('warn', `Failed to check model availability for node ${providerStatus.uuid}: ${modelError.message}`);
+                    }
+                }
             } else {
                 throw new Error(`refreshToken method not implemented for ${providerType}`);
             }
@@ -2374,7 +2385,7 @@ export class ProviderPoolManager {
 
         // 继承旧节点属性（使用重新查找的引用）
         newConfig.weight = currentOldConfig.weight || 100;
-        newConfig.notSupportedModels = currentOldConfig.notSupportedModels || [];
+        newConfig.notSupportedModels = []; // 不继承旧限制，由额度检测重新设置
         newConfig.customName = currentOldConfig.customName || '';
         newConfig.priority = currentOldConfig.priority || 0;
         newConfig.replacedFromUuid = oldUuid;
@@ -2390,6 +2401,12 @@ export class ProviderPoolManager {
 
         // 9. 立即保存（不走 debounce，防止 reload-config 竞态导致 afterSaleMeta 丢失）
         await this._flushImmediately(providerType);
+
+        // 对新账号异步重新检测额度（不继承旧限制）
+        checkAndSetQuotaModels(providerType, newConfig.uuid, this)
+            .catch(err => this._log('warn',
+                `[AfterSale] Quota check failed for ${newConfig.uuid}: ${err.message}`
+            ));
 
         // 9. 广播事件
         broadcastEvent('after_sale_replaced', {

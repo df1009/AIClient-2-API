@@ -2,7 +2,9 @@
 export {
     refreshCodexTokensWithRetry,
     handleCodexOAuth,
-    handleCodexOAuthCallback
+    handleCodexOAuthCallback,
+    checkCodexCredentialsDuplicate,
+    batchImportCodexCredentialsStream
 } from './codex-oauth.js';
 
 // Gemini OAuth

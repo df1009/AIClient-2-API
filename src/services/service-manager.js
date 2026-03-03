@@ -13,6 +13,144 @@ import {
     getFileName,
     formatSystemPath
 } from '../utils/provider-utils.js';
+import { getProviderModels } from '../providers/provider-models.js';
+
+// Quota detection constants
+const QUOTA_THRESHOLD = 800;
+const LOW_QUOTA_ALLOWED_MODELS = [
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-5-20250929',
+    'claude-haiku-4-5'
+];
+
+/**
+ * 从 getUsageLimits 返回值中提取 usageLimit
+ * 优先级：
+ *   1. usageBreakdownList[AGENTIC_REQUEST].usageLimitWithPrecision
+ *   2. usageBreakdownList[AGENTIC_REQUEST].usageLimit
+ *   3. usageBreakdownList[CREDIT].freeTrialInfo.usageLimitWithPrecision (新增)
+ *   4. usageBreakdownList[CREDIT].freeTrialInfo.usageLimit (新增)
+ *   5. usageBreakdownList[CREDIT].usageLimitWithPrecision (新增)
+ *   6. usageBreakdownList[CREDIT].usageLimit (新增)
+ *   7. 顶层 limitCount
+ */
+function extractUsageLimit(rawUsage) {
+    // 添加调试日志（改为 info 级别）
+    logger.info(`[extractUsageLimit] Raw usage data: ${JSON.stringify(rawUsage)}`);
+    
+    if (rawUsage?.usageBreakdownList && Array.isArray(rawUsage.usageBreakdownList)) {
+        // 优先查找 AGENTIC_REQUEST
+        const agenticBreakdown = rawUsage.usageBreakdownList.find(
+            b => b.resourceType === 'AGENTIC_REQUEST'
+        );
+        if (agenticBreakdown) {
+            const limit = agenticBreakdown.usageLimitWithPrecision ?? agenticBreakdown.usageLimit ?? null;
+            if (limit !== null) {
+                logger.info(`[extractUsageLimit] Extracted from AGENTIC_REQUEST: ${limit}`);
+                return limit;
+            }
+        }
+        
+        // 如果没有 AGENTIC_REQUEST，查找 CREDIT
+        const creditBreakdown = rawUsage.usageBreakdownList.find(
+            b => b.resourceType === 'CREDIT'
+        );
+        if (creditBreakdown) {
+            // 优先从 freeTrialInfo 中提取
+            if (creditBreakdown.freeTrialInfo) {
+                const limit = creditBreakdown.freeTrialInfo.usageLimitWithPrecision ?? creditBreakdown.freeTrialInfo.usageLimit ?? null;
+                if (limit !== null) {
+                    logger.info(`[extractUsageLimit] Extracted from CREDIT.freeTrialInfo: ${limit}`);
+                    return limit;
+                }
+            }
+            // 否则从 creditBreakdown 本身提取
+            const limit = creditBreakdown.usageLimitWithPrecision ?? creditBreakdown.usageLimit ?? null;
+            if (limit !== null) {
+                logger.info(`[extractUsageLimit] Extracted from CREDIT: ${limit}`);
+                return limit;
+            }
+        }
+    }
+    
+    const limit = rawUsage?.limitCount ?? null;
+    logger.info(`[extractUsageLimit] Extracted from limitCount: ${limit}`);
+    return limit;
+}
+
+/**
+ * 检测供应商额度并自动设置 notSupportedModels
+ * 仅对 claude-kiro-oauth 生效，其他类型直接返回
+ * 失败时采用宽松策略：不阻塞、不限制
+ */
+export async function checkAndSetQuotaModels(providerType, uuid, poolManager) {
+    if (providerType !== 'claude-kiro-oauth') {
+        return { success: true, action: 'skipped' };
+    }
+
+    const pm = poolManager || providerPoolManager;
+    if (!pm) {
+        logger.warn(`[QuotaCheck] UUID ${uuid}: No providerPoolManager available`);
+        return { success: false, error: 'No providerPoolManager available' };
+    }
+
+    try {
+        // 1. 查找节点配置
+        const pool = pm.providerPools?.[providerType] || [];
+        const nodeConfig = pool.find(p => p.uuid === uuid);
+        if (!nodeConfig) {
+            logger.warn(`[QuotaCheck] UUID ${uuid}: Node not found in pool`);
+            return { success: false, error: `Node ${uuid} not found` };
+        }
+
+        // 2. 创建 adapter 并调用 getUsageLimits
+        const adapter = getServiceAdapter({
+            ...nodeConfig,
+            MODEL_PROVIDER: providerType
+        });
+        const rawUsage = await adapter.getUsageLimits();
+
+        // 3. 提取 usageLimit
+        const usageLimit = extractUsageLimit(rawUsage);
+        if (usageLimit === null || usageLimit === undefined) {
+            logger.warn(`[QuotaCheck] UUID ${uuid}: Cannot extract usageLimit`);
+            return { success: false, error: 'Cannot extract usageLimit' };
+        }
+
+        // 4. 判断是否需要限制
+        if (usageLimit < QUOTA_THRESHOLD) {
+            const allModels = getProviderModels(providerType);
+            const quotaLimitedModels = allModels.filter(
+                m => !LOW_QUOTA_ALLOWED_MODELS.includes(m)
+            );
+
+            // 合并策略：并集（保留用户手动设置 + 额度限制）
+            const existing = Array.isArray(nodeConfig.notSupportedModels)
+                ? nodeConfig.notSupportedModels : [];
+            const merged = [...new Set([...existing, ...quotaLimitedModels])];
+            nodeConfig.notSupportedModels = merged;
+
+            pm._debouncedSave(providerType);
+
+            logger.info(
+                `[QuotaCheck] UUID ${uuid}: usageLimit=${usageLimit}, ` +
+                `threshold=${QUOTA_THRESHOLD}, action=restricted, ` +
+                `models=${merged.join(',')}`
+            );
+            return { success: true, usageLimit, action: 'restricted' };
+        }
+
+        logger.info(
+            `[QuotaCheck] UUID ${uuid}: usageLimit=${usageLimit}, ` +
+            `threshold=${QUOTA_THRESHOLD}, action=unrestricted`
+        );
+        return { success: true, usageLimit, action: 'unrestricted' };
+
+    } catch (err) {
+        logger.warn(`[QuotaCheck] UUID ${uuid}: Failed - ${err.message}`);
+        return { success: false, error: err.message };
+    }
+}
 
 // 存储 ProviderPoolManager 实例
 let providerPoolManager = null;
@@ -113,6 +251,20 @@ export async function autoLinkProviderConfigs(config, options = {}) {
         providerPoolManager.providerPools = config.providerPools;
         providerPoolManager.initializeProviderStatus();
     }
+
+    // 对新关联的 claude-kiro-oauth 节点异步检测额度
+    for (const [displayName, providers] of Object.entries(allNewProviders)) {
+        const mapping = PROVIDER_MAPPINGS.find(m => m.displayName === displayName);
+        if (mapping?.providerType === 'claude-kiro-oauth') {
+            for (const provider of providers) {
+                checkAndSetQuotaModels('claude-kiro-oauth', provider.uuid)
+                    .catch(err => logger.warn(
+                        `[Auto-Link] Quota check failed for ${provider.uuid}: ${err.message}`
+                    ));
+            }
+        }
+    }
+
     return config.providerPools;
 }
 
