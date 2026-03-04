@@ -209,6 +209,7 @@ const translations = {
         'oauth.codex.jsonLabel': '凭据数据 (JSON)',
         'oauth.codex.jsonPlaceholder': '请粘贴包含 Codex 凭据的 JSON 数组...',
         'oauth.codex.fileLabel': '或上传 JSON 文件',
+        'oauth.codex.selectFolder': '选择文件夹',
         'oauth.codex.jsonExample': '查看 JSON 格式示例',
         'oauth.codex.credentialCount': '凭据数量',
         'oauth.codex.importing': '正在导入...',

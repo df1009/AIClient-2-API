@@ -1067,10 +1067,16 @@ function showCodexBatchImportModal() {
                     ></textarea>
                 </div>
                 <div class="form-group" style="margin-top: 12px;">
-                    <label for="codexBatchFiles" style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">
                         <span data-i18n="oauth.codex.fileLabel">${t('oauth.codex.fileLabel')}</span>
                     </label>
-                    <input type="file" id="codexBatchFiles" multiple accept=".json" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 8px;">
+                    <div style="display: flex; gap: 8px;">
+                        <input type="file" id="codexBatchFiles" multiple accept=".json" style="flex: 1; padding: 8px; border: 1px solid #d1d5db; border-radius: 8px;">
+                        <button type="button" id="codexSelectFolder" class="btn btn-secondary" style="white-space: nowrap;">
+                            <i class="fas fa-folder-open"></i>
+                            <span data-i18n="oauth.codex.selectFolder">选择文件夹</span>
+                        </button>
+                    </div>
                 </div>
                 <div style="margin-top: 12px;">
                     <button class="btn-link" id="showCodexJsonExample" style="font-size: 13px; color: #10a37f; cursor: pointer; border: none; background: none; padding: 0;">
@@ -1124,6 +1130,7 @@ function showCodexBatchImportModal() {
 
     const textarea = modal.querySelector('#codexBatchCredentials');
     const fileInput = modal.querySelector('#codexBatchFiles');
+    const folderBtn = modal.querySelector('#codexSelectFolder');
     const statsDiv = modal.querySelector('#codexBatchImportStats');
     const credentialCountValue = modal.querySelector('#codexCredentialCountValue');
     const progressDiv = modal.querySelector('#codexBatchImportProgress');
@@ -1137,9 +1144,69 @@ function showCodexBatchImportModal() {
     const showExampleBtn = modal.querySelector('#showCodexJsonExample');
     const exampleDiv = modal.querySelector('#codexJsonExample');
 
+    // 存储从文件夹读取的文件
+    let folderFiles = [];
+
     // 显示/隐藏 JSON 示例
     showExampleBtn.addEventListener('click', () => {
         exampleDiv.style.display = exampleDiv.style.display === 'none' ? 'block' : 'none';
+    });
+
+    // 文件夹选择按钮事件
+    folderBtn.addEventListener('click', async () => {
+        try {
+            // 检查浏览器是否支持文件夹选择 API
+            if (!window.showDirectoryPicker) {
+                // 降级方案：使用 webkitdirectory 属性
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.webkitdirectory = true;
+                input.multiple = true;
+                input.accept = '.json';
+                
+                input.addEventListener('change', async (e) => {
+                    folderFiles = Array.from(e.target.files).filter(f => f.name.endsWith('.json'));
+                    await updateStats();
+                    if (folderFiles.length > 0) {
+                        showToast(`已选择 ${folderFiles.length} 个 JSON 文件`, 'success');
+                    }
+                });
+                
+                input.click();
+                return;
+            }
+
+            // 使用现代 File System Access API
+            const dirHandle = await window.showDirectoryPicker();
+            folderFiles = [];
+            
+            // 递归读取文件夹中的所有 JSON 文件
+            async function readDirectory(dirHandle, path = '') {
+                for await (const entry of dirHandle.values()) {
+                    if (entry.kind === 'file' && entry.name.endsWith('.json')) {
+                        const file = await entry.getFile();
+                        folderFiles.push(file);
+                    } else if (entry.kind === 'directory') {
+                        // 递归读取子文件夹
+                        await readDirectory(entry, path + entry.name + '/');
+                    }
+                }
+            }
+            
+            await readDirectory(dirHandle);
+            await updateStats();
+            
+            if (folderFiles.length > 0) {
+                showToast(`已从文件夹中读取 ${folderFiles.length} 个 JSON 文件`, 'success');
+            } else {
+                showToast('文件夹中没有找到 JSON 文件', 'warning');
+            }
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                console.error('选择文件夹失败:', error);
+                showToast('选择文件夹失败: ' + error.message, 'error');
+            }
+        }
     });
 
     // 解析凭据的辅助函数
@@ -1176,7 +1243,7 @@ function showCodexBatchImportModal() {
             }
         }
 
-        // 从文件解析
+        // 从文件输入解析
         if (fileInput.files.length > 0) {
             for (const file of fileInput.files) {
                 try {
@@ -1191,6 +1258,25 @@ function showCodexBatchImportModal() {
                     credentials.push(...fileCreds);
                 } catch (e) {
                     console.error(`Failed to parse file ${file.name}:`, e);
+                }
+            }
+        }
+
+        // 从文件夹选择的文件解析
+        if (folderFiles.length > 0) {
+            for (const file of folderFiles) {
+                try {
+                    const content = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = (e) => resolve(e.target.result);
+                        reader.onerror = reject;
+                        reader.readAsText(file);
+                    });
+                    const parsed = JSON.parse(content);
+                    const fileCreds = Array.isArray(parsed) ? parsed : [parsed];
+                    credentials.push(...fileCreds);
+                } catch (e) {
+                    console.error(`Failed to parse folder file ${file.name}:`, e);
                 }
             }
         }
