@@ -1250,8 +1250,24 @@ function showCodexBatchImportModal() {
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Import failed');
+                let errorMessage = 'Import failed';
+                try {
+                    const errorData = await response.json();
+                    if (errorData.error) {
+                        errorMessage = typeof errorData.error === 'string' 
+                            ? errorData.error 
+                            : (errorData.error.message || JSON.stringify(errorData.error));
+                    } else if (errorData.validationErrors) {
+                        // 处理验证错误
+                        const errors = errorData.validationErrors.map(e => 
+                            `凭据 ${e.index} (${e.email || 'unknown'}): 缺少字段 ${e.missingFields.join(', ')}`
+                        ).join('\n');
+                        errorMessage = `验证失败:\n${errors}`;
+                    }
+                } catch (parseError) {
+                    errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                }
+                throw new Error(errorMessage);
             }
 
             // 处理 SSE 流
@@ -1354,12 +1370,27 @@ function showCodexBatchImportModal() {
             }
         } catch (error) {
             console.error('Codex batch import error:', error);
+            
+            // 安全地提取错误信息
+            let errorMessage = 'Unknown error';
+            if (error && typeof error === 'object') {
+                if (error.message) {
+                    errorMessage = error.message;
+                } else if (error.error) {
+                    errorMessage = typeof error.error === 'string' ? error.error : JSON.stringify(error.error);
+                } else {
+                    errorMessage = JSON.stringify(error);
+                }
+            } else if (typeof error === 'string') {
+                errorMessage = error;
+            }
+            
             resultDiv.style.display = 'block';
             resultDiv.style.background = '#fee2e2';
             resultDiv.style.border = '1px solid #fca5a5';
             resultDiv.style.color = '#991b1b';
-            resultDiv.innerHTML = `<i class="fas fa-times-circle"></i> ${t('oauth.codex.importError')}: ${error.message}`;
-            showToast(t('common.error'), t('oauth.codex.importError'), 'error');
+            resultDiv.innerHTML = `<i class="fas fa-times-circle"></i> ${t('oauth.codex.importError')}: ${errorMessage}`;
+            showToast(t('oauth.codex.importError') + ': ' + errorMessage, 'error');
 
             textarea.disabled = false;
             fileInput.disabled = false;
