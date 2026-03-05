@@ -1,5 +1,6 @@
 import { CONFIG } from '../core/config-manager.js';
 import logger from '../utils/logger.js';
+import { getRequestBody } from '../utils/common.js';
 import { serviceInstances, getServiceAdapter } from '../providers/adapter.js';
 import { formatKiroUsage, formatGeminiUsage, formatAntigravityUsage, formatCodexUsage } from '../services/usage-service.js';
 import { readUsageCache, writeUsageCache, readProviderUsageCache, updateProviderUsageCache } from './usage-cache.js';
@@ -282,6 +283,108 @@ export async function handleGetUsage(req, res, currentConfig, providerPoolManage
         res.end(JSON.stringify({
             error: {
                 message: 'Failed to get usage info: ' + error.message
+            }
+        }));
+        return true;
+    }
+}
+
+/**
+ * 获取特定提供商类型中指定节点的用量限制（按 UUID 列表）
+ */
+export async function handleGetProviderUsageByUuids(req, res, currentConfig, providerPoolManager, providerType) {
+    try {
+        const body = await getRequestBody(req);
+        const { uuids } = body;
+        
+        if (!Array.isArray(uuids) || uuids.length === 0) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: { message: 'uuids must be a non-empty array' } }));
+            return true;
+        }
+        
+        logger.info(`[Usage API] Fetching usage for ${uuids.length} nodes in ${providerType}`);
+        
+        const result = {
+            providerType,
+            instances: [],
+            totalCount: uuids.length,
+            successCount: 0,
+            errorCount: 0
+        };
+        
+        let providers = [];
+        if (providerPoolManager && providerPoolManager.providerPools && providerPoolManager.providerPools[providerType]) {
+            providers = providerPoolManager.providerPools[providerType];
+        } else if (currentConfig.providerPools && currentConfig.providerPools[providerType]) {
+            providers = currentConfig.providerPools[providerType];
+        }
+        
+        const uuidSet = new Set(uuids);
+        const selectedProviders = providers.filter(p => uuidSet.has(p.uuid));
+        
+        for (const provider of selectedProviders) {
+            const providerKey = providerType + (provider.uuid || '');
+            let adapter = serviceInstances[providerKey];
+            
+            const instanceResult = {
+                uuid: provider.uuid || 'unknown',
+                name: getProviderDisplayName(provider, providerType),
+                isHealthy: provider.isHealthy !== false,
+                isDisabled: provider.isDisabled === true,
+                success: false,
+                usage: null,
+                error: null
+            };
+            
+            if (provider.isDisabled) {
+                instanceResult.error = 'Provider is disabled';
+                result.errorCount++;
+            } else if (!adapter) {
+                try {
+                    logger.info(`[Usage API] Auto-initializing service adapter for ${providerType}: ${provider.uuid}`);
+                    const serviceConfig = {
+                        ...CONFIG,
+                        ...provider,
+                        MODEL_PROVIDER: providerType
+                    };
+                    adapter = getServiceAdapter(serviceConfig);
+                } catch (initError) {
+                    logger.error(`[Usage API] Failed to initialize adapter for ${providerType}: ${provider.uuid}:`, initError.message);
+                    instanceResult.error = `Service instance initialization failed: ${initError.message}`;
+                    result.errorCount++;
+                }
+            }
+            
+            if (adapter && !instanceResult.error) {
+                try {
+                    const usage = await getAdapterUsage(adapter, providerType);
+                    instanceResult.success = true;
+                    instanceResult.usage = usage;
+                    result.successCount++;
+                } catch (error) {
+                    instanceResult.error = error.message;
+                    result.errorCount++;
+                }
+            }
+            
+            result.instances.push(instanceResult);
+        }
+        
+        const finalResults = {
+            ...result,
+            serverTime: new Date().toISOString()
+        };
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(finalResults));
+        return true;
+    } catch (error) {
+        logger.error(`[UI API] Failed to get usage for selected nodes in ${providerType}:`, error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            error: {
+                message: `Failed to get usage info: ` + error.message
             }
         }));
         return true;

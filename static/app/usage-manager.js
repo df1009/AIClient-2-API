@@ -33,6 +33,7 @@ export function initUsageManager() {
     // 初始化时自动加载缓存数据
     loadUsage();
     loadSupportedProviders();
+    initUsageFilter();
 }
 
 /**
@@ -74,6 +75,175 @@ async function loadSupportedProviders() {
         listEl.innerHTML = `<span class="error-text" data-i18n="usage.failedToLoad">${t('usage.failedToLoad')}</span>`;
     }
 }
+
+/**
+ * 初始化用量筛选面板
+ */
+async function initUsageFilter() {
+    const typeSelect = document.getElementById('usageProviderTypeSelect');
+    if (!typeSelect) return;
+    
+    try {
+        const response = await fetch('/api/usage/supported-providers', {
+            method: 'GET',
+            headers: getAuthHeaders()
+        });
+        if (!response.ok) return;
+        
+        const providers = await response.json();
+        
+        typeSelect.innerHTML = `<option value="" data-i18n="usage.filter.allTypes">${t('usage.filter.allTypes')}</option>`;
+        providers.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p;
+            opt.textContent = getProviderDisplayName(p);
+            typeSelect.appendChild(opt);
+        });
+    } catch (e) {
+        console.error('Failed to init usage filter:', e);
+    }
+}
+
+/**
+ * 供应商类型切换时加载节点列表
+ * @param {string} providerType - 选中的供应商类型
+ */
+async function onUsageProviderTypeChange(providerType) {
+    const nodeSelect = document.getElementById('usageNodeSelect');
+    if (!nodeSelect) return;
+    
+    nodeSelect.innerHTML = '';
+    
+    if (!providerType) return;
+    
+    try {
+        const response = await fetch(`/api/providers/${encodeURIComponent(providerType)}`, {
+            method: 'GET',
+            headers: getAuthHeaders()
+        });
+        if (!response.ok) return;
+        
+        const data = await response.json();
+        const providers = data.providers || [];
+        
+        providers.forEach(p => {
+            if (p.isDisabled) return;
+            const opt = document.createElement('option');
+            opt.value = p.uuid;
+            opt.textContent = p.customName || p.uuid;
+            opt.selected = true;
+            nodeSelect.appendChild(opt);
+        });
+    } catch (e) {
+        console.error('Failed to load provider nodes:', e);
+    }
+}
+
+/**
+ * 全选节点
+ */
+function selectAllUsageNodes() {
+    const nodeSelect = document.getElementById('usageNodeSelect');
+    if (!nodeSelect) return;
+    Array.from(nodeSelect.options).forEach(opt => { opt.selected = true; });
+}
+
+/**
+ * 取消全选节点
+ */
+function deselectAllUsageNodes() {
+    const nodeSelect = document.getElementById('usageNodeSelect');
+    if (!nodeSelect) return;
+    Array.from(nodeSelect.options).forEach(opt => { opt.selected = false; });
+}
+
+/**
+ * 按选中的类型和节点查询用量
+ */
+async function querySelectedUsage() {
+    const typeSelect = document.getElementById('usageProviderTypeSelect');
+    const nodeSelect = document.getElementById('usageNodeSelect');
+    const loadingEl = document.getElementById('usageLoading');
+    const contentEl = document.getElementById('usageContent');
+    const queryBtn = document.getElementById('queryUsageBtn');
+    
+    const providerType = typeSelect ? typeSelect.value : '';
+    
+    if (!providerType) {
+        // 未选类型，走全量刷新
+        await refreshUsage();
+        return;
+    }
+    
+    const selectedUuids = nodeSelect
+        ? Array.from(nodeSelect.selectedOptions).map(opt => opt.value)
+        : [];
+    
+    if (selectedUuids.length === 0) {
+        showToast(t('common.info'), t('usage.filter.noNodesSelected'), 'info');
+        return;
+    }
+    
+    if (loadingEl) loadingEl.style.display = 'block';
+    if (queryBtn) queryBtn.disabled = true;
+    
+    try {
+        showToast(t('common.info'), t('usage.filter.querying', { count: selectedUuids.length }), 'info');
+        
+        const response = await fetch(`/api/usage/${encodeURIComponent(providerType)}/by-uuids`, {
+            method: 'POST',
+            headers: {
+                ...getAuthHeaders(),
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ uuids: selectedUuids })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const providerData = await response.json();
+        
+        if (loadingEl) loadingEl.style.display = 'none';
+        
+        // 构造与 renderUsageData 兼容的数据格式
+        const wrappedData = {
+            timestamp: new Date().toISOString(),
+            providers: { [providerType]: providerData },
+            serverTime: providerData.serverTime
+        };
+        
+        renderUsageData(wrappedData, contentEl);
+        
+        if (providerData.serverTime) {
+            const serverTimeEl = document.getElementById('serverTimeValue');
+            if (serverTimeEl) {
+                serverTimeEl.textContent = new Date(providerData.serverTime).toLocaleString(getCurrentLanguage());
+            }
+        }
+        
+        const lastUpdateEl = document.getElementById('usageLastUpdate');
+        if (lastUpdateEl) {
+            const timeStr = new Date().toLocaleString(getCurrentLanguage());
+            lastUpdateEl.textContent = t('usage.lastUpdate', { time: timeStr });
+        }
+        
+        showToast(t('common.success'), t('usage.filter.querySuccess', { success: providerData.successCount, total: providerData.totalCount }), 'success');
+    } catch (error) {
+        console.error('查询指定节点用量失败:', error);
+        if (loadingEl) loadingEl.style.display = 'none';
+        showToast(t('common.error'), t('common.refresh.failed') + ': ' + error.message, 'error');
+    } finally {
+        if (queryBtn) queryBtn.disabled = false;
+    }
+}
+
+// 挂载到 window
+window.onUsageProviderTypeChange = onUsageProviderTypeChange;
+window.selectAllUsageNodes = selectAllUsageNodes;
+window.deselectAllUsageNodes = deselectAllUsageNodes;
+window.querySelectedUsage = querySelectedUsage;
 
 /**
  * 加载用量数据（优先从缓存读取）

@@ -5,7 +5,8 @@ import { handleProviderPasswordToggle } from './event-handlers.js';
 import { t } from './i18n.js';
 
 // 分页配置
-const PROVIDERS_PER_PAGE = 5;
+const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
+let providersPerPage = 5;
 let currentPage = 1;
 let currentProviders = [];
 let currentProviderType = '';
@@ -34,7 +35,7 @@ function showProviderManagerModal(data) {
         existingModal.remove();
     }
     
-    const totalPages = Math.ceil(providers.length / PROVIDERS_PER_PAGE);
+    const totalPages = Math.ceil(providers.length / providersPerPage);
     
     // 创建模态框
     const modal = document.createElement('div');
@@ -74,19 +75,25 @@ function showProviderManagerModal(data) {
                         <button class="btn btn-danger" onclick="window.deleteUnhealthyProviders('${providerType}')" data-i18n="modal.provider.deleteUnhealthy" title="删除不健康节点">
                             <i class="fas fa-trash-alt"></i> <span data-i18n="modal.provider.deleteUnhealthyBtn">删除不健康</span>
                         </button>
+                        <button class="btn btn-secondary" id="batchSelectToggle" onclick="window.toggleBatchSelect()">
+                            <i class="fas fa-check-square"></i> <span data-i18n="modal.provider.batchSelect">批量选择</span>
+                        </button>
+                        <button class="btn btn-danger" id="batchDeleteBtn" style="display:none;" onclick="window.batchDeleteProviders('${providerType}')">
+                            <i class="fas fa-trash"></i> <span data-i18n="modal.provider.batchDelete">批量删除</span> (<span id="batchDeleteCount">0</span>)
+                        </button>
                         ${providerType === 'claude-kiro-oauth' ? `<button class="btn btn-primary" onclick="window.showAfterSaleImportModal()" title="自动售后导入">
                             <i class="fas fa-exchange-alt"></i> <span data-i18n="afterSale.import.button">售后导入</span>
                         </button>` : ''}
                     </div>
                 </div>
                 
-                ${totalPages > 1 ? renderPagination(1, totalPages, providers.length) : ''}
+                ${renderPagination(1, totalPages, providers.length)}
                 
                 <div class="provider-list" id="providerList">
                     ${renderProviderListPaginated(providers, 1)}
                 </div>
                 
-                ${totalPages > 1 ? renderPagination(1, totalPages, providers.length, 'bottom') : ''}
+                ${renderPagination(1, totalPages, providers.length, 'bottom')}
             </div>
         </div>
     `;
@@ -98,7 +105,7 @@ function showProviderManagerModal(data) {
     addModalEventListeners(modal);
     
     // 先获取该提供商类型的模型列表（只调用一次API）
-    const pageProviders = providers.slice(0, PROVIDERS_PER_PAGE);
+    const pageProviders = providers.slice(0, providersPerPage);
     loadModelsForProviderType(providerType, pageProviders);
 }
 
@@ -111,8 +118,8 @@ function showProviderManagerModal(data) {
  * @returns {string} HTML字符串
  */
 function renderPagination(page, totalPages, totalItems, position = 'top') {
-    const startItem = (page - 1) * PROVIDERS_PER_PAGE + 1;
-    const endItem = Math.min(page * PROVIDERS_PER_PAGE, totalItems);
+    const startItem = (page - 1) * providersPerPage + 1;
+    const endItem = Math.min(page * providersPerPage, totalItems);
     
     // 生成页码按钮
     let pageButtons = '';
@@ -163,6 +170,13 @@ function renderPagination(page, totalPages, totalItems, position = 'top') {
                        class="page-jump-input">
                 <span data-i18n="pagination.page">页</span>
             </div>
+            <div class="pagination-page-size">
+                <span data-i18n="pagination.perPage">每页</span>
+                <select class="page-size-select" onchange="window.changePageSize(parseInt(this.value))">
+                    ${PAGE_SIZE_OPTIONS.map(size => `<option value="${size}" ${size === providersPerPage ? 'selected' : ''}>${size}</option>`).join('')}
+                </select>
+                <span data-i18n="pagination.items">条</span>
+            </div>
         </div>
     `;
 }
@@ -172,7 +186,7 @@ function renderPagination(page, totalPages, totalItems, position = 'top') {
  * @param {number} page - 目标页码
  */
 function goToProviderPage(page) {
-    const totalPages = Math.ceil(currentProviders.length / PROVIDERS_PER_PAGE);
+    const totalPages = Math.ceil(currentProviders.length / providersPerPage);
     
     // 验证页码范围
     if (page < 1) page = 1;
@@ -200,8 +214,8 @@ function goToProviderPage(page) {
     }
     
     // 为当前页的提供商加载模型列表
-    const startIndex = (page - 1) * PROVIDERS_PER_PAGE;
-    const endIndex = Math.min(startIndex + PROVIDERS_PER_PAGE, currentProviders.length);
+    const startIndex = (page - 1) * providersPerPage;
+    const endIndex = Math.min(startIndex + providersPerPage, currentProviders.length);
     const pageProviders = currentProviders.slice(startIndex, endIndex);
     
     // 如果已缓存模型列表，直接使用
@@ -215,14 +229,49 @@ function goToProviderPage(page) {
 }
 
 /**
+ * 修改每页显示数量
+ * @param {number} size - 每页条数
+ */
+function changePageSize(size) {
+    if (!PAGE_SIZE_OPTIONS.includes(size)) return;
+    providersPerPage = size;
+    currentPage = 1;
+    goToProviderPage(1);
+    
+    // 如果总数不够分页，需要处理分页控件的显示/隐藏
+    const totalPages = Math.ceil(currentProviders.length / providersPerPage);
+    const modal = document.querySelector('.provider-modal');
+    if (!modal) return;
+    
+    const modalBody = modal.querySelector('.provider-modal-body');
+    const providerListEl = modal.querySelector('.provider-list');
+    if (!modalBody || !providerListEl) return;
+    
+    const existingPaginations = modal.querySelectorAll('.pagination-container');
+    
+    if (totalPages > 1) {
+        if (existingPaginations.length === 0) {
+            providerListEl.insertAdjacentHTML('beforebegin', renderPagination(1, totalPages, currentProviders.length, 'top'));
+            providerListEl.insertAdjacentHTML('afterend', renderPagination(1, totalPages, currentProviders.length, 'bottom'));
+        }
+    } else {
+        // 只有一页但仍然显示分页控件（以便切换每页数量）
+        if (existingPaginations.length === 0) {
+            providerListEl.insertAdjacentHTML('beforebegin', renderPagination(1, 1, currentProviders.length, 'top'));
+            providerListEl.insertAdjacentHTML('afterend', renderPagination(1, 1, currentProviders.length, 'bottom'));
+        }
+    }
+}
+
+/**
  * 渲染分页后的提供商列表
  * @param {Array} providers - 提供商数组
  * @param {number} page - 当前页码
  * @returns {string} HTML字符串
  */
 function renderProviderListPaginated(providers, page) {
-    const startIndex = (page - 1) * PROVIDERS_PER_PAGE;
-    const endIndex = Math.min(startIndex + PROVIDERS_PER_PAGE, providers.length);
+    const startIndex = (page - 1) * providersPerPage;
+    const endIndex = Math.min(startIndex + providersPerPage, providers.length);
     const pageProviders = providers.slice(startIndex, endIndex);
     
     return renderProviderList(pageProviders);
@@ -488,6 +537,7 @@ function renderProviderList(providers) {
         return `
             <div class="provider-item-detail ${healthClass} ${disabledClass} ${replacedClass}" data-uuid="${provider.uuid}">
                 <div class="provider-item-header" onclick="window.toggleProviderDetails('${provider.uuid}')">
+                    <input type="checkbox" class="batch-select-checkbox" data-uuid="${provider.uuid}" style="display:none;margin-right:8px;width:18px;height:18px;cursor:pointer;flex-shrink:0;" onclick="event.stopPropagation();window.updateBatchDeleteCount()">
                     <div class="provider-info">
                         <div class="provider-name">${provider.customName || provider.uuid}${afterSaleBadgeHtml}${replacedBadgeHtml}${replacedFromHtml}${tagsHtml}</div>
                         <div class="provider-meta">
@@ -1128,7 +1178,7 @@ async function refreshProviderConfig(providerType) {
                 healthyCountElement.textContent = data.healthyCount;
             }
             
-            const totalPages = Math.ceil(data.providers.length / PROVIDERS_PER_PAGE);
+            const totalPages = Math.ceil(data.providers.length / providersPerPage);
             
             // 确保当前页不超过总页数
             if (currentPage > totalPages) {
@@ -1143,29 +1193,23 @@ async function refreshProviderConfig(providerType) {
             
             // 更新分页控件
             const paginationContainers = modal.querySelectorAll('.pagination-container');
-            if (totalPages > 1) {
+            if (paginationContainers.length > 0) {
                 paginationContainers.forEach(container => {
                     const position = container.getAttribute('data-position');
                     container.outerHTML = renderPagination(currentPage, totalPages, data.providers.length, position);
                 });
-                
-                // 如果之前没有分页控件，需要添加
-                if (paginationContainers.length === 0) {
-                    const modalBody = modal.querySelector('.provider-modal-body');
-                    const providerListEl = modal.querySelector('.provider-list');
-                    if (modalBody && providerListEl) {
-                        providerListEl.insertAdjacentHTML('beforebegin', renderPagination(currentPage, totalPages, data.providers.length, 'top'));
-                        providerListEl.insertAdjacentHTML('afterend', renderPagination(currentPage, totalPages, data.providers.length, 'bottom'));
-                    }
-                }
             } else {
-                // 如果只有一页，移除分页控件
-                paginationContainers.forEach(container => container.remove());
+                const modalBody = modal.querySelector('.provider-modal-body');
+                const providerListEl = modal.querySelector('.provider-list');
+                if (modalBody && providerListEl) {
+                    providerListEl.insertAdjacentHTML('beforebegin', renderPagination(currentPage, totalPages, data.providers.length, 'top'));
+                    providerListEl.insertAdjacentHTML('afterend', renderPagination(currentPage, totalPages, data.providers.length, 'bottom'));
+                }
             }
             
             // 重新加载当前页的模型列表
-            const startIndex = (currentPage - 1) * PROVIDERS_PER_PAGE;
-            const endIndex = Math.min(startIndex + PROVIDERS_PER_PAGE, data.providers.length);
+            const startIndex = (currentPage - 1) * providersPerPage;
+            const endIndex = Math.min(startIndex + providersPerPage, data.providers.length);
             const pageProviders = data.providers.slice(startIndex, endIndex);
             loadModelsForProviderType(providerType, pageProviders);
         }
@@ -1660,6 +1704,114 @@ async function deleteUnhealthyProviders(providerType) {
     }
 }
 
+let batchSelectMode = false;
+
+/**
+ * 切换批量选择模式
+ */
+function toggleBatchSelect() {
+    batchSelectMode = !batchSelectMode;
+    const checkboxes = document.querySelectorAll('.batch-select-checkbox');
+    const batchDeleteBtn = document.getElementById('batchDeleteBtn');
+    const toggleBtn = document.getElementById('batchSelectToggle');
+
+    checkboxes.forEach(cb => {
+        cb.style.display = batchSelectMode ? 'inline-block' : 'none';
+        if (!batchSelectMode) cb.checked = false;
+    });
+
+    if (batchDeleteBtn) {
+        batchDeleteBtn.style.display = batchSelectMode ? 'inline-flex' : 'none';
+    }
+
+    if (toggleBtn) {
+        if (batchSelectMode) {
+            toggleBtn.classList.remove('btn-secondary');
+            toggleBtn.classList.add('btn-primary');
+            // 添加全选/取消全选按钮
+            let selectAllBtn = document.getElementById('batchSelectAllBtn');
+            if (!selectAllBtn) {
+                selectAllBtn = document.createElement('button');
+                selectAllBtn.id = 'batchSelectAllBtn';
+                selectAllBtn.className = 'btn btn-secondary';
+                selectAllBtn.innerHTML = `<i class="fas fa-check-double"></i> <span data-i18n="modal.provider.selectAll">${t('modal.provider.selectAll')}</span>`;
+                selectAllBtn.onclick = () => window.toggleSelectAll();
+                toggleBtn.parentNode.insertBefore(selectAllBtn, batchDeleteBtn);
+            }
+            selectAllBtn.style.display = 'inline-flex';
+        } else {
+            toggleBtn.classList.remove('btn-primary');
+            toggleBtn.classList.add('btn-secondary');
+            const selectAllBtn = document.getElementById('batchSelectAllBtn');
+            if (selectAllBtn) selectAllBtn.style.display = 'none';
+        }
+    }
+
+    updateBatchDeleteCount();
+}
+
+/**
+ * 全选/取消全选当前页
+ */
+function toggleSelectAll() {
+    const checkboxes = document.querySelectorAll('.batch-select-checkbox');
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    checkboxes.forEach(cb => { cb.checked = !allChecked; });
+    updateBatchDeleteCount();
+}
+
+/**
+ * 更新批量删除计数
+ */
+function updateBatchDeleteCount() {
+    const checked = document.querySelectorAll('.batch-select-checkbox:checked');
+    const countSpan = document.getElementById('batchDeleteCount');
+    if (countSpan) countSpan.textContent = checked.length;
+}
+
+/**
+ * 批量删除选中的提供商
+ * @param {string} providerType - 提供商类型
+ */
+async function batchDeleteProviders(providerType) {
+    const checked = document.querySelectorAll('.batch-select-checkbox:checked');
+    const uuids = Array.from(checked).map(cb => cb.dataset.uuid);
+
+    if (uuids.length === 0) {
+        showToast(t('common.info'), t('modal.provider.batchDelete.noSelection'), 'info');
+        return;
+    }
+
+    if (!confirm(t('modal.provider.batchDeleteConfirm', { count: uuids.length }))) {
+        return;
+    }
+
+    try {
+        showToast(t('common.info'), t('modal.provider.batchDelete.deleting'), 'info');
+
+        const response = await window.apiClient.post(
+            `/providers/${encodeURIComponent(providerType)}/batch-delete`,
+            { uuids }
+        );
+
+        if (response.success) {
+            showToast(
+                t('common.success'),
+                t('modal.provider.batchDelete.success', { count: response.deletedCount }),
+                'success'
+            );
+            batchSelectMode = false;
+            await window.apiClient.post('/reload-config');
+            await refreshProviderConfig(providerType);
+        } else {
+            showToast(t('common.error'), t('modal.provider.batchDelete.failed'), 'error');
+        }
+    } catch (error) {
+        console.error('批量删除失败:', error);
+        showToast(t('common.error'), t('modal.provider.batchDelete.failed') + ': ' + error.message, 'error');
+    }
+}
+
 /**
  * 批量刷新不健康节点的UUID
  * @param {string} providerType - 提供商类型
@@ -1761,7 +1913,12 @@ export {
     loadModelsForProviderType,
     renderNotSupportedModelsSelector,
     goToProviderPage,
-    refreshProviderUuid
+    changePageSize,
+    refreshProviderUuid,
+    toggleBatchSelect,
+    toggleSelectAll,
+    updateBatchDeleteCount,
+    batchDeleteProviders
 };
 
 // 将函数挂载到window对象
@@ -1779,4 +1936,9 @@ window.performHealthCheck = performHealthCheck;
 window.deleteUnhealthyProviders = deleteUnhealthyProviders;
 window.refreshUnhealthyUuids = refreshUnhealthyUuids;
 window.goToProviderPage = goToProviderPage;
+window.changePageSize = changePageSize;
 window.refreshProviderUuid = refreshProviderUuid;
+window.toggleBatchSelect = toggleBatchSelect;
+window.toggleSelectAll = toggleSelectAll;
+window.updateBatchDeleteCount = updateBatchDeleteCount;
+window.batchDeleteProviders = batchDeleteProviders;

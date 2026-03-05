@@ -21,6 +21,31 @@
             </span>
         </div>
         
+        <div class="usage-filter-panel" id="usageFilterPanel">
+            <div class="usage-filter-row">
+                <div class="usage-filter-group">
+                    <label data-i18n="usage.filter.providerType">查询类型:</label>
+                    <select id="usageProviderTypeSelect" onchange="window.onUsageProviderTypeChange(this.value)">
+                        <option value="" data-i18n="usage.filter.allTypes">全部类型</option>
+                    </select>
+                </div>
+                <div class="usage-filter-group">
+                    <label data-i18n="usage.filter.nodes">选择节点:</label>
+                    <select id="usageNodeSelect" multiple size="4" style="min-width:260px;">
+                    </select>
+                    <div class="usage-filter-node-actions">
+                        <button class="btn btn-sm btn-secondary" onclick="window.selectAllUsageNodes()" data-i18n="usage.filter.selectAll">全选</button>
+                        <button class="btn btn-sm btn-secondary" onclick="window.deselectAllUsageNodes()" data-i18n="usage.filter.deselectAll">取消全选</button>
+                    </div>
+                </div>
+                <div class="usage-filter-group">
+                    <button class="btn btn-primary" id="queryUsageBtn" onclick="window.querySelectedUsage()">
+                        <i class="fas fa-search"></i> <span data-i18n="usage.filter.query">查询</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div class="usage-loading" id="usageLoading" style="display: none;">
             <i class="fas fa-spinner fa-spin"></i> <span data-i18n="usage.loading">正在加载用量数据...</span>
         </div>
