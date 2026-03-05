@@ -189,14 +189,6 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
         return await providerApi.handleDeleteUnhealthyProviders(req, res, currentConfig, providerPoolManager, providerType);
     }
 
-    // Batch delete providers by UUID list
-    // NOTE: This must be before the generic /{providerType}/{uuid} route
-    const batchDeleteMatch = pathParam.match(/^\/api\/providers\/([^\/]+)\/batch-delete$/);
-    if (method === 'POST' && batchDeleteMatch) {
-        const providerType = decodeURIComponent(batchDeleteMatch[1]);
-        return await providerApi.handleBatchDeleteProviders(req, res, currentConfig, providerPoolManager, providerType);
-    }
-
     // Refresh UUIDs for all unhealthy providers of a specific type
     // NOTE: This must be before the generic /{providerType}/{uuid} route to avoid matching 'refresh-unhealthy-uuids' as UUID
     const refreshUnhealthyUuidsMatch = pathParam.match(/^\/api\/providers\/([^\/]+)\/refresh-unhealthy-uuids$/);
@@ -346,13 +338,6 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
     // Get supported providers for usage query
     if (method === 'GET' && pathParam === '/api/usage/supported-providers') {
         return await usageApi.handleGetSupportedProviders(req, res);
-    }
-
-    // Get usage for selected nodes of a specific provider type (by UUID list)
-    const usageByUuidsMatch = pathParam.match(/^\/api\/usage\/([^\/]+)\/by-uuids$/);
-    if (method === 'POST' && usageByUuidsMatch) {
-        const providerType = decodeURIComponent(usageByUuidsMatch[1]);
-        return await usageApi.handleGetProviderUsageByUuids(req, res, currentConfig, providerPoolManager, providerType);
     }
 
     // Get usage limits for a specific provider type
