@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import logger from '../utils/logger.js';
 import { getRequestBody } from '../utils/common.js';
-import { getAllProviderModels, getProviderModels } from '../providers/provider-models.js';
+import { getAllProviderModels, getProviderModels, getCustomModels, setCustomModels, isCustomModel } from '../providers/provider-models.js';
+import { CONFIG } from '../core/config-manager.js';
 import { generateUUID, createProviderConfig, formatSystemPath, detectProviderFromPath, addToUsedPaths, isPathUsed, pathsEqual } from '../utils/provider-utils.js';
 import { broadcastEvent } from './event-broadcast.js';
 import { checkAndSetQuotaModels } from '../services/service-manager.js';
@@ -1450,4 +1451,115 @@ export async function handleDeleteTag(req, res, currentConfig, providerPoolManag
         res.end(JSON.stringify({ success: false, message: error.message }));
         return true;
     }
+}
+
+// ============ 自定义模型管理 ============
+
+function saveCustomModelsToConfig() {
+    const configPath = 'configs/config.json';
+    try {
+        let configData = {};
+        if (existsSync(configPath)) {
+            configData = JSON.parse(readFileSync(configPath, 'utf-8'));
+        }
+        configData.CUSTOM_MODELS = getCustomModels();
+        writeFileSync(configPath, JSON.stringify(configData, null, 2), 'utf-8');
+        CONFIG.CUSTOM_MODELS = configData.CUSTOM_MODELS;
+    } catch (error) {
+        logger.error('[Custom Models] Failed to save to config:', error.message);
+        throw error;
+    }
+}
+
+/**
+ * 添加自定义模型
+ */
+export async function handleAddCustomModel(req, res) {
+    try {
+        const body = await getRequestBody(req);
+        const { providerType, modelName } = body;
+
+        if (!providerType || !modelName || typeof modelName !== 'string' || !modelName.trim()) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: { message: 'providerType and modelName are required' } }));
+            return true;
+        }
+
+        const trimmed = modelName.trim();
+        const customs = { ...getCustomModels() };
+
+        if (!customs[providerType]) {
+            customs[providerType] = [];
+        }
+
+        const allModels = getProviderModels(providerType);
+        if (allModels.includes(trimmed)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: { message: `Model "${trimmed}" already exists` } }));
+            return true;
+        }
+
+        customs[providerType].push(trimmed);
+        setCustomModels(customs);
+        saveCustomModelsToConfig();
+
+        logger.info(`[Custom Models] Added model "${trimmed}" to ${providerType}`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, providerType, modelName: trimmed }));
+        return true;
+    } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: error.message } }));
+        return true;
+    }
+}
+
+/**
+ * 删除自定义模型
+ */
+export async function handleDeleteCustomModel(req, res) {
+    try {
+        const body = await getRequestBody(req);
+        const { providerType, modelName } = body;
+
+        if (!providerType || !modelName) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: { message: 'providerType and modelName are required' } }));
+            return true;
+        }
+
+        const customs = { ...getCustomModels() };
+        if (!customs[providerType] || !customs[providerType].includes(modelName)) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: { message: `Custom model "${modelName}" not found` } }));
+            return true;
+        }
+
+        customs[providerType] = customs[providerType].filter(m => m !== modelName);
+        if (customs[providerType].length === 0) {
+            delete customs[providerType];
+        }
+        setCustomModels(customs);
+        saveCustomModelsToConfig();
+
+        logger.info(`[Custom Models] Deleted model "${modelName}" from ${providerType}`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, providerType, modelName }));
+        return true;
+    } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: error.message } }));
+        return true;
+    }
+}
+
+/**
+ * 获取所有自定义模型
+ */
+export async function handleGetCustomModels(req, res) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getCustomModels()));
+    return true;
 }

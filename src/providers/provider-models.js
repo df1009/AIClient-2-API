@@ -88,19 +88,53 @@ export const PROVIDER_MODELS = {
     'forward-api': []
 };
 
+let customModels = {};
+
 /**
- * 获取指定提供商类型支持的模型列表
+ * @param {Object} models - { providerType: [modelName, ...] }
+ */
+export function setCustomModels(models) {
+    customModels = models || {};
+}
+
+export function getCustomModels() {
+    return customModels;
+}
+
+/**
+ * 获取指定提供商类型支持的模型列表（内置 + 自定义，去重）
  * @param {string} providerType - 提供商类型
  * @returns {Array<string>} 模型列表
  */
 export function getProviderModels(providerType) {
-    return PROVIDER_MODELS[providerType] || [];
+    const builtIn = PROVIDER_MODELS[providerType] || [];
+    const custom = customModels[providerType] || [];
+    if (custom.length === 0) return builtIn;
+    return [...builtIn, ...custom.filter(m => !builtIn.includes(m))];
 }
 
 /**
- * 获取所有提供商的模型列表
+ * 获取所有提供商的模型列表（内置 + 自定义合并）
  * @returns {Object} 所有提供商的模型映射
  */
 export function getAllProviderModels() {
-    return PROVIDER_MODELS;
+    const allProviderTypes = new Set([
+        ...Object.keys(PROVIDER_MODELS),
+        ...Object.keys(customModels)
+    ]);
+    const merged = {};
+    for (const pt of allProviderTypes) {
+        merged[pt] = getProviderModels(pt);
+    }
+    return merged;
+}
+
+/**
+ * 判断模型是否为自定义模型
+ * @param {string} providerType
+ * @param {string} modelName
+ * @returns {boolean}
+ */
+export function isCustomModel(providerType, modelName) {
+    return (customModels[providerType] || []).includes(modelName);
 }

@@ -211,7 +211,8 @@ export async function handleUpdateConfig(req, res, currentConfig, providerPoolMa
                 AUTO_AFTER_SALE_FAIL_ON_REFRESH_ERROR: currentConfig.AUTO_AFTER_SALE_FAIL_ON_REFRESH_ERROR,
                 AUTO_AFTER_SALE_AUTO_TAG_ENABLED: currentConfig.AUTO_AFTER_SALE_AUTO_TAG_ENABLED ?? false,
                 AUTO_AFTER_SALE_AUTO_TAG_DELAY: currentConfig.AUTO_AFTER_SALE_AUTO_TAG_DELAY ?? 5000,
-                AUTO_AFTER_SALE_AUTO_TAG_TAGS: currentConfig.AUTO_AFTER_SALE_AUTO_TAG_TAGS ?? []
+                AUTO_AFTER_SALE_AUTO_TAG_TAGS: currentConfig.AUTO_AFTER_SALE_AUTO_TAG_TAGS ?? [],
+                ...(currentConfig.CUSTOM_MODELS ? { CUSTOM_MODELS: currentConfig.CUSTOM_MODELS } : {})
             };
 
             writeFileSync(configPath, JSON.stringify(configToSave, null, 2), 'utf-8');

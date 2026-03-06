@@ -160,6 +160,19 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
         return await providerApi.handleGetProviderTypeModels(req, res, providerType);
     }
 
+    // Custom models CRUD
+    if (pathParam === '/api/custom-models') {
+        if (method === 'GET') {
+            return await providerApi.handleGetCustomModels(req, res);
+        }
+        if (method === 'POST') {
+            return await providerApi.handleAddCustomModel(req, res);
+        }
+        if (method === 'DELETE') {
+            return await providerApi.handleDeleteCustomModel(req, res);
+        }
+    }
+
     // Add new provider configuration
     if (method === 'POST' && pathParam === '/api/providers') {
         return await providerApi.handleAddProvider(req, res, currentConfig, providerPoolManager);

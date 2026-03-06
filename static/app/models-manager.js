@@ -7,6 +7,12 @@ import { t } from './i18n.js';
 
 // 模型数据缓存
 let modelsCache = null;
+let customModelsCache = null;
+
+const authHeaders = () => ({
+    'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`,
+    'Content-Type': 'application/json'
+});
 
 /**
  * 获取所有提供商的可用模型
@@ -19,9 +25,7 @@ async function fetchProviderModels() {
     
     try {
         const response = await fetch('/api/provider-models', {
-            headers: {
-                'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`
-            }
+            headers: authHeaders()
         });
         
         if (!response.ok) {
@@ -34,6 +38,41 @@ async function fetchProviderModels() {
         console.error('[Models Manager] Failed to fetch provider models:', error);
         throw error;
     }
+}
+
+async function fetchCustomModels() {
+    try {
+        const response = await fetch('/api/custom-models', { headers: authHeaders() });
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        customModelsCache = await response.json();
+        return customModelsCache;
+    } catch (error) {
+        console.error('[Models Manager] Failed to fetch custom models:', error);
+        customModelsCache = {};
+        return {};
+    }
+}
+
+async function addCustomModel(providerType, modelName) {
+    const response = await fetch('/api/custom-models', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ providerType, modelName })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error?.message || 'Failed to add model');
+    return data;
+}
+
+async function deleteCustomModel(providerType, modelName) {
+    const response = await fetch('/api/custom-models', {
+        method: 'DELETE',
+        headers: authHeaders(),
+        body: JSON.stringify({ providerType, modelName })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error?.message || 'Failed to delete model');
+    return data;
 }
 
 /**
@@ -96,12 +135,12 @@ function showCopyToast(modelName) {
 /**
  * 渲染模型列表
  * @param {Object} models - 模型数据
+ * @param {Object} customModels - 自定义模型数据
  */
-function renderModelsList(models) {
+function renderModelsList(models, customModels = {}) {
     const container = document.getElementById('modelsList');
     if (!container) return;
     
-    // 检查是否有模型数据
     const providerTypes = Object.keys(models);
     if (providerTypes.length === 0) {
         container.innerHTML = `
@@ -113,7 +152,6 @@ function renderModelsList(models) {
         return;
     }
     
-    // 渲染每个提供商的模型组
     let html = '';
     
     for (const providerType of providerTypes) {
@@ -122,6 +160,7 @@ function renderModelsList(models) {
         
         const providerDisplayName = getProviderDisplayName(providerType);
         const providerIcon = getProviderIcon(providerType);
+        const customSet = new Set(customModels[providerType] || []);
         
         html += `
             <div class="provider-models-group" data-provider="${providerType}">
@@ -136,17 +175,27 @@ function renderModelsList(models) {
                     </div>
                 </div>
                 <div class="provider-models-content" id="models-${providerType}">
-                    ${modelList.map(model => `
-                        <div class="model-item" onclick="window.copyModelName('${escapeHtml(model)}', this)" title="${t('models.clickToCopy') || '点击复制'}">
+                    ${modelList.map(model => {
+                        const isCustom = customSet.has(model);
+                        return `
+                        <div class="model-item ${isCustom ? 'model-item-custom' : ''}" onclick="window.copyModelName('${escapeHtml(model)}', this)" title="${t('models.clickToCopy') || '点击复制'}">
                             <div class="model-item-icon">
                                 <i class="fas fa-cube"></i>
                             </div>
                             <span class="model-item-name">${escapeHtml(model)}</span>
+                            ${isCustom ? `<span class="model-custom-badge">${t('models.custom') || '自定义'}</span>
+                            <div class="model-item-delete" onclick="event.stopPropagation(); window.deleteCustomModelUI('${escapeHtml(providerType)}', '${escapeHtml(model)}')" title="${t('models.deleteCustom') || '删除自定义模型'}">
+                                <i class="fas fa-trash-alt"></i>
+                            </div>` : `
                             <div class="model-item-copy">
                                 <i class="fas fa-copy"></i>
-                            </div>
-                        </div>
-                    `).join('')}
+                            </div>`}
+                        </div>`;
+                    }).join('')}
+                    <div class="model-add-custom" onclick="event.stopPropagation(); window.showAddCustomModelInput('${escapeHtml(providerType)}')" title="${t('models.addCustom') || '添加自定义模型'}">
+                        <i class="fas fa-plus"></i>
+                        <span>${t('models.addCustom') || '添加自定义模型'}</span>
+                    </div>
                 </div>
             </div>
         `;
@@ -244,6 +293,88 @@ async function copyModelName(modelName, element) {
 }
 
 /**
+ * 显示添加自定义模型的输入框
+ */
+function showAddCustomModelInput(providerType) {
+    const existing = document.getElementById(`add-custom-input-${providerType}`);
+    if (existing) {
+        existing.querySelector('input').focus();
+        return;
+    }
+
+    const content = document.getElementById(`models-${providerType}`);
+    if (!content) return;
+
+    const addBtn = content.querySelector('.model-add-custom');
+    const wrapper = document.createElement('div');
+    wrapper.id = `add-custom-input-${providerType}`;
+    wrapper.className = 'custom-model-input-wrapper';
+    wrapper.innerHTML = `
+        <input type="text" class="custom-model-input" placeholder="${t('models.inputPlaceholder') || '输入模型名称'}" />
+        <button class="custom-model-confirm" onclick="window.confirmAddCustomModel('${escapeHtml(providerType)}')">
+            <i class="fas fa-check"></i>
+        </button>
+        <button class="custom-model-cancel" onclick="window.cancelAddCustomModel('${escapeHtml(providerType)}')">
+            <i class="fas fa-times"></i>
+        </button>
+    `;
+
+    content.insertBefore(wrapper, addBtn);
+    const input = wrapper.querySelector('input');
+    input.focus();
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') window.confirmAddCustomModel(providerType);
+        if (e.key === 'Escape') window.cancelAddCustomModel(providerType);
+    });
+}
+
+async function confirmAddCustomModel(providerType) {
+    const wrapper = document.getElementById(`add-custom-input-${providerType}`);
+    if (!wrapper) return;
+    const input = wrapper.querySelector('input');
+    const modelName = input.value.trim();
+    if (!modelName) return;
+
+    try {
+        await addCustomModel(providerType, modelName);
+        showToast(t('models.addSuccess') || '添加成功', 'success');
+        await refreshModels();
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
+function cancelAddCustomModel(providerType) {
+    const wrapper = document.getElementById(`add-custom-input-${providerType}`);
+    if (wrapper) wrapper.remove();
+}
+
+async function deleteCustomModelUI(providerType, modelName) {
+    if (!confirm(`${t('models.confirmDelete') || '确定删除自定义模型'} "${modelName}" ?`)) return;
+    try {
+        await deleteCustomModel(providerType, modelName);
+        showToast(t('models.deleteSuccess') || '删除成功', 'success');
+        await refreshModels();
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
+function showToast(message, type = 'success') {
+    const toastContainer = document.getElementById('toastContainer');
+    if (!toastContainer) return;
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    const icon = type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle';
+    toast.innerHTML = `<i class="fas ${icon}"></i><span>${message}</span>`;
+    toastContainer.appendChild(toast);
+    setTimeout(() => {
+        toast.classList.add('toast-fade-out');
+        setTimeout(() => toast.remove(), 300);
+    }, 2000);
+}
+
+/**
  * 初始化模型管理器
  */
 async function initModelsManager() {
@@ -251,8 +382,11 @@ async function initModelsManager() {
     if (!container) return;
     
     try {
-        const models = await fetchProviderModels();
-        renderModelsList(models);
+        const [models, customs] = await Promise.all([
+            fetchProviderModels(),
+            fetchCustomModels()
+        ]);
+        renderModelsList(models, customs);
     } catch (error) {
         container.innerHTML = `
             <div class="models-empty">
@@ -268,6 +402,7 @@ async function initModelsManager() {
  */
 async function refreshModels() {
     modelsCache = null;
+    customModelsCache = null;
     await initModelsManager();
 }
 
@@ -275,6 +410,10 @@ async function refreshModels() {
 window.toggleProviderModels = toggleProviderModels;
 window.copyModelName = copyModelName;
 window.refreshModels = refreshModels;
+window.showAddCustomModelInput = showAddCustomModelInput;
+window.confirmAddCustomModel = confirmAddCustomModel;
+window.cancelAddCustomModel = cancelAddCustomModel;
+window.deleteCustomModelUI = deleteCustomModelUI;
 
 // 监听组件加载完成事件
 window.addEventListener('componentsLoaded', () => {

@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import { promises as pfs } from 'fs';
 import { INPUT_SYSTEM_PROMPT_FILE, MODEL_PROVIDER } from '../utils/common.js';
 import logger from '../utils/logger.js';
+import { setCustomModels } from '../providers/provider-models.js';
 
 export let CONFIG = {}; // Make CONFIG exportable
 export let PROMPT_LOG_FILENAME = ''; // Make PROMPT_LOG_FILENAME exportable
@@ -236,6 +237,12 @@ export async function initializeConfig(args = process.argv.slice(2), configFileP
         PROMPT_LOG_FILENAME = `${currentConfig.PROMPT_LOG_BASE_NAME}-${timestamp}.log`;
     } else {
         PROMPT_LOG_FILENAME = ''; // Clear if not logging to file
+    }
+
+    // 初始化自定义模型
+    if (currentConfig.CUSTOM_MODELS && typeof currentConfig.CUSTOM_MODELS === 'object') {
+        setCustomModels(currentConfig.CUSTOM_MODELS);
+        logger.info('[Config] Loaded custom models from config');
     }
 
     // Assign to the exported CONFIG

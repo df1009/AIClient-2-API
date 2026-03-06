@@ -772,3 +772,130 @@
 [data-theme="dark"] .image-zoom-overlay {
     background: var(--neutral-shadow-95);
 }
+
+/* ========================================
+   自定义模型样式
+   ======================================== */
+
+.model-item-custom {
+    border-style: dashed;
+}
+
+.model-custom-badge {
+    font-size: 0.65rem;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: var(--primary-10);
+    color: var(--primary-color);
+    border: 1px solid var(--primary-color);
+    margin-right: 4px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.model-item-delete {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: var(--transition);
+    font-size: 0.8rem;
+    flex-shrink: 0;
+}
+
+.model-item:hover .model-item-delete {
+    opacity: 1;
+}
+
+.model-item-delete:hover {
+    color: var(--danger-color, #e53e3e);
+}
+
+.model-add-custom {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border: 2px dashed var(--border-color);
+    border-radius: var(--radius-md);
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: var(--transition);
+    font-size: 0.8rem;
+    grid-column: 1 / -1;
+}
+
+.model-add-custom:hover {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    background: var(--primary-10);
+}
+
+.custom-model-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.375rem;
+    border: 1px solid var(--primary-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-primary);
+    grid-column: 1 / -1;
+}
+
+.custom-model-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    padding: 0.25rem 0.5rem;
+}
+
+.custom-model-confirm,
+.custom-model-cancel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.8rem;
+    transition: var(--transition);
+}
+
+.custom-model-confirm {
+    background: var(--primary-color);
+    color: white;
+}
+
+.custom-model-confirm:hover {
+    opacity: 0.85;
+}
+
+.custom-model-cancel {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.custom-model-cancel:hover {
+    background: var(--bg-secondary);
+}
+
+[data-theme="dark"] .model-custom-badge {
+    background: var(--primary-10);
+    color: var(--primary-color);
+}
+
+[data-theme="dark"] .custom-model-input-wrapper {
+    background: var(--bg-secondary);
+    border-color: var(--primary-color);
+}
+
+[data-theme="dark"] .custom-model-input {
+    color: var(--text-primary);
+}

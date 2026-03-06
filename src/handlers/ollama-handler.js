@@ -7,7 +7,7 @@ import { getRequestBody, handleError, MODEL_PROTOCOL_PREFIX, MODEL_PROVIDER, get
 import logger from '../utils/logger.js';
 import { convertData } from '../convert/convert.js';
 import { ConverterFactory } from '../converters/ConverterFactory.js';
-import { getProviderModels } from '../providers/provider-models.js';
+import { getProviderModels, getAllProviderModels } from '../providers/provider-models.js';
 // Ollama版本号
 /**
  * Model name prefix mapping for different providers
@@ -243,23 +243,12 @@ export function getProviderForModel(modelName, defaultProvider) {
  * @returns {string|null} The provider type or null if not found
  */
 function findProviderByModelName(modelName) {
-    // Map of provider types to check
-    const providerTypes = [
-        MODEL_PROVIDER.GEMINI_CLI,
-        MODEL_PROVIDER.ANTIGRAVITY,
-        MODEL_PROVIDER.KIRO_API,
-        MODEL_PROVIDER.QWEN_API,
-        MODEL_PROVIDER.IFLOW_API
-    ];
-    
-    // Check each provider's model list
-    for (const providerType of providerTypes) {
-        const models = getProviderModels(providerType);
-        if (models.includes(modelName)) {
+    const allModels = getAllProviderModels();
+    for (const providerType of Object.keys(allModels)) {
+        if (allModels[providerType].includes(modelName)) {
             return providerType;
         }
     }
-    
     return null;
 }
 
