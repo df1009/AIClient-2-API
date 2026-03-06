@@ -1,0 +1,53 @@
+# Nginx 配置示例 - WebSocket 隧道反向代理
+#
+# 此配置将同一域名下的请求分流：
+# - 普通 API 请求 -> NewAPI
+# - WebSocket 隧道连接 -> AIClient
+
+server {
+    listen 443 ssl;
+    server_name ai.shopfanli.com;
+
+    # SSL 证书配置
+    ssl_certificate     /etc/nginx/ssl/ai.shopfanli.com.pem;
+    ssl_certificate_key /etc/nginx/ssl/ai.shopfanli.com.key;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # 通用 Proxy Headers
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # WebSocket 隧道 -> AIClient
+    # 用户的 proxy-relay 客户端连接此路径
+    location /ws/tunnel {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+
+    # 所有其他请求 -> NewAPI
+    location / {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+
+        # 支持 SSE 流式响应
+        proxy_buffering off;
+        proxy_cache off;
+    }
+}
+
+# HTTP -> HTTPS 重定向（可选）
+server {
+    listen 80;
+    server_name ai.shopfanli.com;
+    return 301 https://$host$request_uri;
+}

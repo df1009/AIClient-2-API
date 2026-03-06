@@ -1,12 +1,13 @@
 /**
  * 代理工具模块
- * 支持 HTTP、HTTPS 和 SOCKS5 代理
+ * 支持 HTTP、HTTPS、SOCKS5 代理和 WebSocket 隧道
  */
 
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import logger from './logger.js';
 import { HttpProxyAgent } from 'http-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
+import { getTunnelManager } from '../services/tunnel-manager.js';
 
 /**
  * 解析代理URL并返回相应的代理配置
@@ -126,4 +127,54 @@ export function getGoogleAuthProxyConfig(config, providerType) {
     }
 
     return null;
+}
+
+// ==================== 隧道代理支持 ====================
+
+/**
+ * 检查当前请求是否应该通过隧道转发
+ * @param {Object} config - 应用配置对象（包含 _tunnelId）
+ * @returns {boolean}
+ */
+export function shouldUseTunnel(config) {
+    if (!config || !config.TUNNEL_ENABLED || !config._tunnelId) {
+        return false;
+    }
+    try {
+        const tm = getTunnelManager();
+        return tm.hasActiveTunnel(config._tunnelId);
+    } catch (e) {
+        return false;
+    }
+}
+
+/**
+ * 获取隧道回退策略
+ * @param {Object} config - 应用配置对象
+ * @returns {string} 'proxy' | 'direct' | 'reject'
+ */
+export function getTunnelFallback(config) {
+    return config?.TUNNEL_FALLBACK || 'proxy';
+}
+
+/**
+ * 通过隧道发送非流式请求
+ * @param {Object} config - 应用配置对象
+ * @param {Object} requestOptions - { url, method, headers, body }
+ * @returns {Promise<Object>} { status, headers, body }
+ */
+export async function sendViaTunnel(config, requestOptions) {
+    const tm = getTunnelManager();
+    return tm.sendRequest(config._tunnelId, requestOptions);
+}
+
+/**
+ * 通过隧道发送流式请求
+ * @param {Object} config - 应用配置对象
+ * @param {Object} requestOptions - { url, method, headers, body }
+ * @returns {AsyncGenerator} yields string chunks
+ */
+export async function* sendStreamViaTunnel(config, requestOptions) {
+    const tm = getTunnelManager();
+    yield* tm.sendStreamRequest(config._tunnelId, requestOptions);
 }

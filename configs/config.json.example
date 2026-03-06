@@ -54,5 +54,12 @@
     "LOG_INCLUDE_REQUEST_ID": true,
     "LOG_INCLUDE_TIMESTAMP": true,
     "LOG_MAX_FILE_SIZE": 10485760,
-    "LOG_MAX_FILES": 10
+    "LOG_MAX_FILES": 10,
+
+    "TUNNEL_ENABLED": false,
+    "TUNNEL_PATH": "/ws/tunnel",
+    "TUNNEL_TOKENS": {},
+    "TUNNEL_TOKENS_FILE": "configs/tunnel_tokens.json",
+    "TUNNEL_FALLBACK": "proxy",
+    "TUNNEL_TIMEOUT": 120000
 }

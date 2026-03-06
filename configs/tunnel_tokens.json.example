@@ -1,0 +1,8 @@
+{
+  "tun-example-token-aaa": {
+    "name": "用户A"
+  },
+  "tun-example-token-bbb": {
+    "name": "用户B"
+  }
+}

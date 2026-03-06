@@ -1,0 +1,19 @@
+{
+  "name": "proxy-relay",
+  "version": "1.0.0",
+  "description": "本地代理加速客户端 - 通过您的本地网络加速 AI API 访问",
+  "type": "module",
+  "main": "proxy-relay.js",
+  "bin": {
+    "proxy-relay": "./proxy-relay.js"
+  },
+  "scripts": {
+    "start": "node proxy-relay.js"
+  },
+  "dependencies": {
+    "ws": "^8.19.0",
+    "https-proxy-agent": "^7.0.6",
+    "http-proxy-agent": "^7.0.2",
+    "socks-proxy-agent": "^8.0.5"
+  }
+}

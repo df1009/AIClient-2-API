@@ -57,7 +57,7 @@ export function createRequestHandler(config, providerPoolManager) {
         // Set CORS headers for all requests
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-goog-api-key, Model-Provider, X-Requested-With, Accept, Origin');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-goog-api-key, Model-Provider, X-Requested-With, Accept, Origin, X-Tunnel-Id');
         res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours cache for preflight
 
         // Handle CORS preflight requests
@@ -137,6 +137,12 @@ export function createRequestHandler(config, providerPoolManager) {
             }
         }
 
+
+        // Extract tunnel ID from request header (set by NewAPI channel config)
+        const tunnelId = req.headers['x-tunnel-id'];
+        if (tunnelId) {
+            currentConfig._tunnelId = tunnelId;
+        }
 
         // Handle API requests
         // Allow overriding MODEL_PROVIDER via request header

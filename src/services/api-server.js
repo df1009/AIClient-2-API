@@ -6,6 +6,7 @@ import { initializeUIManagement } from './ui-manager.js';
 import { initializeAPIManagement } from './api-manager.js';
 import { createRequestHandler } from '../handlers/request-handler.js';
 import { discoverPlugins, getPluginManager } from '../core/plugin-manager.js';
+import { initializeTunnelManager, getTunnelManager } from './tunnel-manager.js';
 
 /**
  * @license
@@ -178,6 +179,12 @@ function setupWorkerCommunication() {
 async function gracefulShutdown() {
     logger.info('[Server] Initiating graceful shutdown...');
 
+    // 关闭隧道管理器
+    try {
+        const tm = getTunnelManager();
+        if (tm) tm.shutdown();
+    } catch (e) {}
+
     // 停止售后定时器
     const poolManager = getProviderPoolManager();
     if (poolManager) {
@@ -282,6 +289,12 @@ async function startServer() {
         headersTimeout: 60000, // 头部超时 60 秒
         keepAliveTimeout: 65000 // Keep-alive 超时
     }, requestHandlerInstance);
+
+    // 初始化隧道管理器
+    if (CONFIG.TUNNEL_ENABLED) {
+        initializeTunnelManager(serverInstance, CONFIG);
+        logger.info('[Tunnel] WebSocket tunnel enabled');
+    }
 
     // 设置服务器的最大连接数
     serverInstance.maxConnections = 1000;

@@ -93,7 +93,12 @@ export async function initializeConfig(args = process.argv.slice(2), configFileP
         AUTO_AFTER_SALE_SHOP_EMAIL: "",
         AUTO_AFTER_SALE_SHOP_PASSWORD: "",
         AUTO_AFTER_SALE_REGIONS: ["us-east-1", "eu-north-1"],
-        AUTO_AFTER_SALE_FAIL_ON_REFRESH_ERROR: true
+        AUTO_AFTER_SALE_FAIL_ON_REFRESH_ERROR: true,
+        TUNNEL_ENABLED: false,
+        TUNNEL_PATH: '/ws/tunnel',
+        TUNNEL_TOKENS: {},
+        TUNNEL_FALLBACK: 'proxy',
+        TUNNEL_TIMEOUT: 120000
     };
 
     try {
@@ -227,6 +232,21 @@ export async function initializeConfig(args = process.argv.slice(2), configFileP
         }
     } else {
         currentConfig.providerPools = {};
+    }
+
+    // 加载隧道 Token 配置
+    if (currentConfig.TUNNEL_ENABLED) {
+        const tunnelTokensFile = currentConfig.TUNNEL_TOKENS_FILE || 'configs/tunnel_tokens.json';
+        try {
+            const tokensData = await pfs.readFile(tunnelTokensFile, 'utf8');
+            const fileTokens = JSON.parse(tokensData);
+            currentConfig.TUNNEL_TOKENS = { ...currentConfig.TUNNEL_TOKENS, ...fileTokens };
+            logger.info(`[Config] Loaded tunnel tokens from ${tunnelTokensFile}`);
+        } catch (error) {
+            if (error.code !== 'ENOENT') {
+                logger.error(`[Config Error] Failed to load tunnel tokens: ${error.message}`);
+            }
+        }
     }
 
     // Set PROMPT_LOG_FILENAME based on the determined config

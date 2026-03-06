@@ -6,6 +6,8 @@ import logger from './logger.js';
 import { convertData, getOpenAIStreamChunkStop } from '../convert/convert.js';
 import { ProviderStrategyFactory } from './provider-strategies.js';
 import { getPluginManager } from '../core/plugin-manager.js';
+import { shouldUseTunnel } from './proxy-utils.js';
+import { createTunnelServiceWrapper } from '../services/tunnel-service-wrapper.js';
 
 // ==================== 网络错误处理 ====================
 
@@ -920,6 +922,12 @@ export async function handleContentGenerationRequest(req, res, service, endpoint
     const promptText = extractPromptText(processedRequestBody, toProvider);
     await logConversation('input', promptText, CONFIG.PROMPT_LOG_MODE, PROMPT_LOG_FILENAME);
     
+    // 4.5. Wrap service with tunnel if an active tunnel is available for this request
+    if (shouldUseTunnel(CONFIG)) {
+        logger.info(`[Tunnel] Active tunnel detected for ${CONFIG._tunnelId}, wrapping service`);
+        service = createTunnelServiceWrapper(service, CONFIG._tunnelId, CONFIG);
+    }
+
     // 5. Call the appropriate stream or unary handler, passing the provider info.
     // 创建重试上下文，包含 CONFIG 以便在认证错误时切换凭证重试
     // 凭证切换重试次数（默认 5），可在配置中自定义更大的值
