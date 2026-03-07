@@ -131,6 +131,16 @@ async function loadConfiguration() {
             }
         }
         
+        // 加载隧道配置
+        const tunnelEnabledEl = document.getElementById('tunnelEnabled');
+        const tunnelPathEl = document.getElementById('tunnelPath');
+        const tunnelTimeoutEl = document.getElementById('tunnelTimeout');
+        const tunnelFallbackEl = document.getElementById('tunnelFallback');
+        if (tunnelEnabledEl) tunnelEnabledEl.checked = data.TUNNEL_ENABLED === true;
+        if (tunnelPathEl) tunnelPathEl.value = data.TUNNEL_PATH || '/ws/tunnel';
+        if (tunnelTimeoutEl) tunnelTimeoutEl.value = data.TUNNEL_TIMEOUT || 120000;
+        if (tunnelFallbackEl) tunnelFallbackEl.value = data.TUNNEL_FALLBACK || 'reject';
+
         // 加载代理配置
         const proxyUrlEl = document.getElementById('proxyUrl');
         if (proxyUrlEl) proxyUrlEl.value = data.PROXY_URL || '';
@@ -300,6 +310,12 @@ async function saveConfiguration() {
         config.modelFallbackMapping = {};
     }
     
+    // 保存隧道配置
+    config.TUNNEL_ENABLED = document.getElementById('tunnelEnabled')?.checked === true;
+    config.TUNNEL_PATH = document.getElementById('tunnelPath')?.value?.trim() || '/ws/tunnel';
+    config.TUNNEL_TIMEOUT = parseInt(document.getElementById('tunnelTimeout')?.value || 120000);
+    config.TUNNEL_FALLBACK = document.getElementById('tunnelFallback')?.value || 'reject';
+
     // 保存代理配置
     config.PROXY_URL = document.getElementById('proxyUrl')?.value?.trim() || null;
     

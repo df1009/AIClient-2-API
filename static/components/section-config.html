@@ -122,6 +122,41 @@
                 </div>
             </div>
 
+            <!-- 隧道设置 -->
+            <div class="config-group-section">
+                <h3><i class="fas fa-network-wired"></i> 隧道设置（用户端梯子）</h3>
+                <div class="config-row">
+                    <div class="form-group">
+                        <label>启用隧道功能</label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="tunnelEnabled">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label for="tunnelFallback">无隧道时降级策略</label>
+                        <select id="tunnelFallback" class="form-control">
+                            <option value="reject">拒绝请求 (reject)</option>
+                            <option value="proxy">走服务器代理 (proxy)</option>
+                            <option value="direct">直连 (direct)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="tunnelPath">WebSocket 路径</label>
+                        <input type="text" id="tunnelPath" class="form-control" placeholder="/ws/tunnel" value="/ws/tunnel">
+                    </div>
+                    <div class="form-group">
+                        <label for="tunnelTimeout">请求超时(ms)</label>
+                        <input type="number" id="tunnelTimeout" class="form-control" value="120000" min="10000" step="1000">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <small class="form-text">用户端运行: <code>node proxy-relay.js --token &lt;API Key&gt; --proxy http://127.0.0.1:7890</code><br>new-api 渠道请求头覆盖配置: <code>x-tunnel-id: {user_token}</code></small>
+                </div>
+            </div>
+
             <!-- 服务治理与高可用 -->
             <div class="config-group-section">
                 <h3 data-i18n="config.governance.title"><i class="fas fa-shield-alt"></i> 服务治理</h3>

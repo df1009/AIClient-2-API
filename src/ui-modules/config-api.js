@@ -111,6 +111,12 @@ export async function handleUpdateConfig(req, res, currentConfig, providerPoolMa
         if (newConfig.PROXY_URL !== undefined) currentConfig.PROXY_URL = newConfig.PROXY_URL;
         if (newConfig.PROXY_ENABLED_PROVIDERS !== undefined) currentConfig.PROXY_ENABLED_PROVIDERS = newConfig.PROXY_ENABLED_PROVIDERS;
 
+        // Tunnel settings
+        if (newConfig.TUNNEL_ENABLED !== undefined) currentConfig.TUNNEL_ENABLED = newConfig.TUNNEL_ENABLED;
+        if (newConfig.TUNNEL_PATH !== undefined) currentConfig.TUNNEL_PATH = newConfig.TUNNEL_PATH;
+        if (newConfig.TUNNEL_TIMEOUT !== undefined) currentConfig.TUNNEL_TIMEOUT = newConfig.TUNNEL_TIMEOUT;
+        if (newConfig.TUNNEL_FALLBACK !== undefined) currentConfig.TUNNEL_FALLBACK = newConfig.TUNNEL_FALLBACK;
+
         // Log settings
         if (newConfig.LOG_ENABLED !== undefined) currentConfig.LOG_ENABLED = newConfig.LOG_ENABLED;
         if (newConfig.LOG_OUTPUT_MODE !== undefined) currentConfig.LOG_OUTPUT_MODE = newConfig.LOG_OUTPUT_MODE;
@@ -191,6 +197,10 @@ export async function handleUpdateConfig(req, res, currentConfig, providerPoolMa
                 modelFallbackMapping: currentConfig.modelFallbackMapping,
                 PROXY_URL: currentConfig.PROXY_URL,
                 PROXY_ENABLED_PROVIDERS: currentConfig.PROXY_ENABLED_PROVIDERS,
+                TUNNEL_ENABLED: currentConfig.TUNNEL_ENABLED,
+                TUNNEL_PATH: currentConfig.TUNNEL_PATH,
+                TUNNEL_TIMEOUT: currentConfig.TUNNEL_TIMEOUT,
+                TUNNEL_FALLBACK: currentConfig.TUNNEL_FALLBACK,
                 LOG_ENABLED: currentConfig.LOG_ENABLED,
                 LOG_OUTPUT_MODE: currentConfig.LOG_OUTPUT_MODE,
                 LOG_LEVEL: currentConfig.LOG_LEVEL,

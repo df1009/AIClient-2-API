@@ -1,4 +1,6 @@
 import { getServiceAdapter, serviceInstances } from '../providers/adapter.js';
+import { createTunnelServiceWrapper } from './tunnel-service-wrapper.js';
+import { getTunnelManager } from './tunnel-manager.js';
 import logger from '../utils/logger.js';
 import { ProviderPoolManager } from '../providers/provider-pool-manager.js';
 import deepmerge from 'deepmerge';
@@ -531,7 +533,25 @@ export async function getApiService(config, requestedModel = null, options = {})
             throw new Error(errorMsg);
         }
     }
-    return getServiceAdapter(serviceConfig);
+    const service = getServiceAdapter(serviceConfig);
+
+    // 如果请求携带了 tunnelId，将推理请求包装为隧道转发
+    // 鉴权/刷新 token/用量查询不经过此函数，继续走服务器 PROXY_URL
+    const tunnelId = config._tunnelId;
+    if (tunnelId) {
+        const tm = getTunnelManager();
+        if (tm.hasActiveTunnel(tunnelId)) {
+            logger.info(`[API Service] Wrapping service with tunnel ${tunnelId.slice(0, 8)}... for provider ${config.MODEL_PROVIDER}`);
+            return createTunnelServiceWrapper(service, tunnelId, serviceConfig);
+        } else {
+            logger.warn(`[API Service] Tunnel ${tunnelId.slice(0, 8)}... requested but no active connection found, rejecting request`);
+            const err = new Error(`No active tunnel connection for token ${tunnelId.slice(0, 8)}..., please start proxy-relay client first`);
+            err.statusCode = 503;
+            throw err;
+        }
+    }
+
+    return service;
 }
 
 /**
@@ -579,8 +599,23 @@ export async function getApiServiceWithFallback(config, requestedModel = null, o
         }
     }
     
-    const service = getServiceAdapter(serviceConfig);
-    
+    let service = getServiceAdapter(serviceConfig);
+
+    // 如果请求携带了 tunnelId，将推理请求包装为隧道转发
+    const tunnelId = config._tunnelId;
+    if (tunnelId) {
+        const tm = getTunnelManager();
+        if (tm.hasActiveTunnel(tunnelId)) {
+            logger.info(`[API Service] Wrapping service with tunnel ${tunnelId.slice(0, 8)}... for provider ${actualProviderType}`);
+            service = createTunnelServiceWrapper(service, tunnelId, serviceConfig);
+        } else {
+            logger.warn(`[API Service] Tunnel ${tunnelId.slice(0, 8)}... requested but no active connection found, rejecting request`);
+            const err = new Error(`No active tunnel connection for token ${tunnelId.slice(0, 8)}..., please start proxy-relay client first`);
+            err.statusCode = 503;
+            throw err;
+        }
+    }
+
     return {
         service,
         serviceConfig,

@@ -7,25 +7,34 @@
  *
  * 用法:
  *   node proxy-relay.js --token tun-xxx [--proxy http://127.0.0.1:7890]
+ *   node proxy-relay.js --token sk-aaa,sk-bbb,sk-ccc [--proxy http://127.0.0.1:7890]
+ *   node proxy-relay.js --token sk-aaa --token sk-bbb [--proxy http://127.0.0.1:7890]
  */
 
 import WebSocket from 'ws';
+import { fetch as undiciFetch, ProxyAgent as UndiciProxyAgent } from 'undici';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { HttpProxyAgent } from 'http-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 
 // ========== 平台配置（管理员维护） ==========
-const PLATFORM_SERVER = 'wss://ai.shopfanli.com/ws/tunnel';
+const PLATFORM_SERVER = process.env.TUNNEL_SERVER || 'wss://ai.shopfanli.com/ws/tunnel';
 const PLATFORM_NAME = 'API 加速服务';
 // =============================================
 
 function parseArgs(argv) {
-    const args = { token: '', proxy: '', reconnectInterval: 5000 };
+    const args = { tokens: [], proxy: '', reconnectInterval: 5000 };
     for (let i = 2; i < argv.length; i++) {
         switch (argv[i]) {
-            case '--token': case '-t': args.token = argv[++i] || ''; break;
+            case '--token': case '-t': {
+                const raw = argv[++i] || '';
+                // 支持逗号分隔多个 token
+                const list = raw.split(',').map(t => t.trim()).filter(t => t);
+                args.tokens.push(...list);
+                break;
+            }
             case '--proxy': case '-p': args.proxy = argv[++i] || ''; break;
             case '--reconnect-interval': args.reconnectInterval = parseInt(argv[++i], 10) || 5000; break;
             case '--version': case '-v': console.log(`proxy-relay v${VERSION}`); process.exit(0);
@@ -41,9 +50,13 @@ proxy-relay v${VERSION} - ${PLATFORM_NAME}
 
 用法:
   node proxy-relay.js --token <token> [options]
+  node proxy-relay.js --token <token1,token2,token3> [options]
+  node proxy-relay.js --token <token1> --token <token2> [options]
 
 必填参数:
-  --token,  -t <token>     加速令牌
+  --token,  -t <token>     加速令牌，支持多种方式指定多个令牌：
+                           1. 逗号分隔: --token sk-aaa,sk-bbb,sk-ccc
+                           2. 重复参数: --token sk-aaa --token sk-bbb
 
 可选参数:
   --proxy,  -p <url>       本地代理地址 (如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080)
@@ -54,10 +67,11 @@ proxy-relay v${VERSION} - ${PLATFORM_NAME}
 `);
 }
 
-function log(level, ...messages) {
+function log(level, token, ...messages) {
     const ts = new Date().toLocaleTimeString();
     const prefix = { info: '✓', warn: '⚠', error: '✗', status: '●' };
-    console.log(`[${ts}] ${prefix[level] || '·'}`, ...messages);
+    const tag = token ? `[${token.slice(0, 8)}] ` : '';
+    console.log(`[${ts}] ${prefix[level] || '·'} ${tag}`, ...messages);
 }
 
 function createProxyAgent(proxyUrl) {
@@ -66,11 +80,11 @@ function createProxyAgent(proxyUrl) {
         const url = new URL(proxyUrl);
         const protocol = url.protocol.toLowerCase();
         if (protocol === 'socks5:' || protocol === 'socks4:' || protocol === 'socks:') {
-            return new SocksProxyAgent(proxyUrl);
+            return { ws: new SocksProxyAgent(proxyUrl), fetch: new UndiciProxyAgent(proxyUrl) };
         }
-        return new HttpsProxyAgent(proxyUrl);
+        return { ws: new HttpsProxyAgent(proxyUrl), fetch: new UndiciProxyAgent(proxyUrl) };
     } catch (e) {
-        log('error', `无法解析代理地址: ${e.message}`);
+        log('error', '', `无法解析代理地址: ${e.message}`);
         return null;
     }
 }
@@ -79,8 +93,10 @@ async function executeRequest(reqMsg, proxyAgent) {
     const { requestId, url, method, headers, body, stream } = reqMsg;
     const fetchOptions = { method: method || 'POST', headers: headers || {} };
 
-    if (proxyAgent) {
-        fetchOptions.agent = proxyAgent;
+    if (proxyAgent && proxyAgent.fetch) {
+        fetchOptions.dispatcher = proxyAgent.fetch;
+    } else if (proxyAgent) {
+        fetchOptions.dispatcher = proxyAgent;
     }
 
     if (body && method !== 'GET' && method !== 'HEAD') {
@@ -92,7 +108,7 @@ async function executeRequest(reqMsg, proxyAgent) {
     const timeoutId = setTimeout(() => controller.abort(), 180000);
 
     try {
-        const response = await fetch(url, fetchOptions);
+        const response = await undiciFetch(url, fetchOptions);
         clearTimeout(timeoutId);
         return { response, requestId, stream };
     } catch (err) {
@@ -145,20 +161,17 @@ async function handleStreamResponse(ws, response, requestId) {
     }));
 }
 
-function connect(args) {
-    const { token, proxy, reconnectInterval } = args;
+function connectToken(token, proxy, reconnectInterval, shutdownSignal) {
     const server = PLATFORM_SERVER;
     const wsUrl = `${server}${server.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
     const proxyAgent = createProxyAgent(proxy);
     let ws;
     let reconnectTimer = null;
-    let isShuttingDown = false;
-    let activeRequests = 0;
 
     function scheduleReconnect() {
-        if (isShuttingDown) return;
+        if (shutdownSignal.shutdown) return;
         if (reconnectTimer) return;
-        log('info', `${reconnectInterval / 1000}秒后重连...`);
+        log('info', token, `${reconnectInterval / 1000}秒后重连...`);
         reconnectTimer = setTimeout(() => {
             reconnectTimer = null;
             doConnect();
@@ -166,22 +179,21 @@ function connect(args) {
     }
 
     function doConnect() {
-        if (isShuttingDown) return;
-        log('status', `正在连接${PLATFORM_NAME}...`);
+        if (shutdownSignal.shutdown) return;
+        log('status', token, `正在连接${PLATFORM_NAME}...`);
 
         try {
             ws = new WebSocket(wsUrl);
         } catch (e) {
-            log('error', `连接失败: ${e.message}`);
+            log('error', token, `连接失败: ${e.message}`);
             scheduleReconnect();
             return;
         }
 
         ws.on('open', () => {
-            log('info', '连接成功');
-            log('info', `加速令牌: ${token.slice(0, 8)}...`);
-            if (proxy) log('info', `本地代理: ${proxy}`);
-            log('status', '加速服务运行中，等待请求...');
+            log('info', token, '连接成功');
+            if (proxy) log('info', token, `本地代理: ${proxy}`);
+            log('status', token, '加速服务运行中，等待请求...');
         });
 
         ws.on('message', async (data) => {
@@ -194,9 +206,8 @@ function connect(args) {
 
             if (msg.type !== 'request') return;
 
-            activeRequests++;
             const shortUrl = msg.url ? new URL(msg.url).hostname : 'unknown';
-            log('info', `[${msg.requestId.slice(0, 8)}] ${msg.stream ? '流式' : '普通'}请求 -> ${shortUrl}${proxyAgent ? ' (代理)' : ' (直连)'}`);
+            log('info', token, `[${msg.requestId.slice(0, 8)}] ${msg.stream ? '流式' : '普通'}请求 -> ${shortUrl}${proxyAgent ? ' (代理)' : ' (直连)'}`);
 
             try {
                 const { response, requestId, stream } = await executeRequest(msg, proxyAgent);
@@ -206,9 +217,9 @@ function connect(args) {
                 } else {
                     await handleNonStreamResponse(ws, response, requestId);
                 }
-                log('info', `[${requestId.slice(0, 8)}] 完成 (${response.status})`);
+                log('info', token, `[${requestId.slice(0, 8)}] 完成 (${response.status})`);
             } catch (err) {
-                log('error', `[${msg.requestId.slice(0, 8)}] 失败: ${err.message}`);
+                log('error', token, `[${msg.requestId.slice(0, 8)}] 失败: ${err.message}`);
                 if (ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({
                         requestId: msg.requestId,
@@ -216,26 +227,24 @@ function connect(args) {
                         message: err.message
                     }));
                 }
-            } finally {
-                activeRequests--;
             }
         });
 
         ws.on('close', (code, reason) => {
             const reasonStr = reason ? reason.toString() : '';
             if (code === 4001 || code === 4003) {
-                log('error', `认证失败: ${reasonStr || '令牌无效，请检查您的加速令牌'}`);
+                log('error', token, `认证失败: ${reasonStr || '令牌无效，请检查您的加速令牌'}`);
                 return;
             }
-            log('warn', `连接断开 (${code})`);
+            log('warn', token, `连接断开 (${code})`);
             scheduleReconnect();
         });
 
         ws.on('error', (err) => {
             if (err.code === 'ECONNREFUSED') {
-                log('error', '无法连接到服务器，请检查网络');
+                log('error', token, '无法连接到服务器，请检查网络');
             } else {
-                log('error', `连接错误: ${err.message}`);
+                log('error', token, `连接错误: ${err.message}`);
             }
         });
 
@@ -246,34 +255,37 @@ function connect(args) {
 
     doConnect();
 
-    process.on('SIGINT', () => {
-        isShuttingDown = true;
-        log('info', '正在关闭...');
-        if (reconnectTimer) clearTimeout(reconnectTimer);
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.close(1000, 'Client shutdown');
+    return {
+        close: () => {
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close(1000, 'Client shutdown');
+            }
         }
-        setTimeout(() => process.exit(0), 1000);
-    });
-
-    process.on('SIGTERM', () => {
-        isShuttingDown = true;
-        if (reconnectTimer) clearTimeout(reconnectTimer);
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.close(1000, 'Client shutdown');
-        }
-        setTimeout(() => process.exit(0), 1000);
-    });
+    };
 }
 
 // --- Main ---
 const args = parseArgs(process.argv);
 
-if (!args.token) {
+if (args.tokens.length === 0) {
     console.error('错误: 必须提供 --token 参数\n');
     printHelp();
     process.exit(1);
 }
 
-log('status', `proxy-relay v${VERSION}`);
-connect(args);
+log('status', '', `proxy-relay v${VERSION}`);
+log('info', '', `共 ${args.tokens.length} 个令牌，启动连接...`);
+
+const shutdownSignal = { shutdown: false };
+const connections = args.tokens.map(token => connectToken(token, args.proxy, args.reconnectInterval, shutdownSignal));
+
+function shutdown() {
+    shutdownSignal.shutdown = true;
+    log('info', '', '正在关闭所有连接...');
+    connections.forEach(c => c.close());
+    setTimeout(() => process.exit(0), 1000);
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
