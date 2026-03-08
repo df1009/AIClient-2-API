@@ -1563,3 +1563,78 @@ export async function handleGetCustomModels(req, res) {
     res.end(JSON.stringify(getCustomModels()));
     return true;
 }
+
+/**
+ * 批量删除指定 UUID 的提供商配置
+ */
+export async function handleBulkDeleteProviders(req, res, currentConfig, providerPoolManager, providerType) {
+    try {
+        const body = await getRequestBody(req);
+        const { uuids } = body;
+
+        if (!Array.isArray(uuids) || uuids.length === 0) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: { message: 'uuids array is required and must not be empty' } }));
+            return true;
+        }
+
+        const filePath = currentConfig.PROVIDER_POOLS_FILE_PATH || 'configs/provider_pools.json';
+        let providerPools = {};
+
+        if (existsSync(filePath)) {
+            try {
+                const fileContent = readFileSync(filePath, 'utf-8');
+                providerPools = JSON.parse(fileContent);
+            } catch (readError) {
+                res.writeHead(404, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: { message: 'Provider pools file not found' } }));
+                return true;
+            }
+        }
+
+        const providers = providerPools[providerType] || [];
+        const uuidSet = new Set(uuids);
+        const deletedProviders = providers.filter(p => uuidSet.has(p.uuid));
+        const remaining = providers.filter(p => !uuidSet.has(p.uuid));
+
+        if (deletedProviders.length === 0) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: { message: 'None of the specified providers were found' } }));
+            return true;
+        }
+
+        if (remaining.length === 0) {
+            delete providerPools[providerType];
+        } else {
+            providerPools[providerType] = remaining;
+        }
+
+        writeFileSync(filePath, JSON.stringify(providerPools, null, 2), 'utf-8');
+        logger.info(`[UI API] Bulk deleted ${deletedProviders.length} providers from ${providerType}`);
+
+        if (providerPoolManager) {
+            providerPoolManager.providerPools = providerPools;
+            providerPoolManager.initializeProviderStatus();
+        }
+
+        broadcastEvent('config_update', {
+            action: 'bulk_delete',
+            filePath: filePath,
+            providerType,
+            deletedCount: deletedProviders.length,
+            timestamp: new Date().toISOString()
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            success: true,
+            deletedCount: deletedProviders.length,
+            notFoundCount: uuids.length - deletedProviders.length
+        }));
+        return true;
+    } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: error.message } }));
+        return true;
+    }
+}

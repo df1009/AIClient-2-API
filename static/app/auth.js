@@ -188,8 +188,13 @@ class ApiClient {
     /**
      * DELETE请求
      */
-    async delete(endpoint) {
-        return this.request(endpoint, { method: 'DELETE' });
+    async delete(endpoint, data) {
+        const options = { method: 'DELETE' };
+        if (data !== undefined) {
+            options.body = JSON.stringify(data);
+            options.headers = { 'Content-Type': 'application/json' };
+        }
+        return this.request(endpoint, options);
     }
 
     /**
