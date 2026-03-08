@@ -202,6 +202,14 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
         return await providerApi.handleDeleteUnhealthyProviders(req, res, currentConfig, providerPoolManager, providerType);
     }
 
+    // Bulk delete providers by UUID list for a specific type
+    // NOTE: This must be before the generic /{providerType}/{uuid} route to avoid matching 'bulk-delete' as UUID
+    const bulkDeleteMatch = pathParam.match(/^\/api\/providers\/([^\/]+)\/bulk-delete$/);
+    if (method === 'DELETE' && bulkDeleteMatch) {
+        const providerType = decodeURIComponent(bulkDeleteMatch[1]);
+        return await providerApi.handleBulkDeleteProviders(req, res, currentConfig, providerPoolManager, providerType);
+    }
+
     // Refresh UUIDs for all unhealthy providers of a specific type
     // NOTE: This must be before the generic /{providerType}/{uuid} route to avoid matching 'refresh-unhealthy-uuids' as UUID
     const refreshUnhealthyUuidsMatch = pathParam.match(/^\/api\/providers\/([^\/]+)\/refresh-unhealthy-uuids$/);

@@ -5,7 +5,7 @@ import { handleProviderPasswordToggle } from './event-handlers.js';
 import { t } from './i18n.js';
 
 // 分页配置
-const PROVIDERS_PER_PAGE = 5;
+let PROVIDERS_PER_PAGE = parseInt(localStorage.getItem('providersPerPage') || '5', 10);
 let currentPage = 1;
 let currentProviders = [];
 let currentProviderType = '';
@@ -74,6 +74,16 @@ function showProviderManagerModal(data) {
                         <button class="btn btn-danger" onclick="window.deleteUnhealthyProviders('${providerType}')" data-i18n="modal.provider.deleteUnhealthy" title="删除不健康节点">
                             <i class="fas fa-trash-alt"></i> <span data-i18n="modal.provider.deleteUnhealthyBtn">删除不健康</span>
                         </button>
+                        <button class="btn btn-outline-danger" id="bulkSelectToggleBtn" onclick="window.toggleBulkSelectMode('${providerType}')" title="批量删除">
+                            <i class="fas fa-check-square"></i> <span id="bulkSelectBtnText">批量删除</span>
+                        </button>
+                        <div class="page-size-toolbar" style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
+                            <span>每页</span>
+                            <select class="page-size-select" onchange="window.changeProvidersPerPage(parseInt(this.value))">
+                                ${[5, 10, 20, 50].map(n => `<option value="${n}" ${n === PROVIDERS_PER_PAGE ? 'selected' : ''}>${n}</option>`).join('')}
+                            </select>
+                            <span>条</span>
+                        </div>
                         ${providerType === 'claude-kiro-oauth' ? `<button class="btn btn-primary" onclick="window.showAfterSaleImportModal()" title="自动售后导入">
                             <i class="fas fa-exchange-alt"></i> <span data-i18n="afterSale.import.button">售后导入</span>
                         </button>` : ''}
@@ -163,6 +173,7 @@ function renderPagination(page, totalPages, totalItems, position = 'top') {
                        class="page-jump-input">
                 <span data-i18n="pagination.page">页</span>
             </div>
+<!-- page-size-select moved to toolbar -->
         </div>
     `;
 }
@@ -205,6 +216,60 @@ function goToProviderPage(page) {
     const pageProviders = currentProviders.slice(startIndex, endIndex);
     
     // 如果已缓存模型列表，直接使用
+    if (cachedModels.length > 0) {
+        pageProviders.forEach(provider => {
+            renderNotSupportedModelsSelector(provider.uuid, cachedModels, provider.notSupportedModels || []);
+        });
+    } else {
+        loadModelsForProviderType(currentProviderType, pageProviders);
+    }
+}
+
+/**
+ * 修改每页显示条数
+ * @param {number} size - 每页条数
+ */
+function changeProvidersPerPage(size) {
+    PROVIDERS_PER_PAGE = size;
+    localStorage.setItem('providersPerPage', size);
+    currentPage = 1;
+
+    const modal = document.querySelector('.provider-modal');
+    if (!modal) return;
+
+    // 同步工具栏选择器
+    const toolbarSelect = modal.querySelector('.page-size-toolbar .page-size-select');
+    if (toolbarSelect) toolbarSelect.value = size;
+
+    const totalPages = Math.ceil(currentProviders.length / PROVIDERS_PER_PAGE);
+
+    // 更新列表
+    const providerList = document.getElementById('providerList');
+    if (providerList) {
+        providerList.innerHTML = renderProviderListPaginated(currentProviders, 1);
+    }
+
+    // 更新分页控件
+    const paginationContainers = modal.querySelectorAll('.pagination-container');
+    if (totalPages > 1) {
+        if (paginationContainers.length > 0) {
+            paginationContainers.forEach(container => {
+                const position = container.getAttribute('data-position');
+                container.outerHTML = renderPagination(1, totalPages, currentProviders.length, position);
+            });
+        } else {
+            const providerListEl = modal.querySelector('.provider-list');
+            if (providerListEl) {
+                providerListEl.insertAdjacentHTML('beforebegin', renderPagination(1, totalPages, currentProviders.length, 'top'));
+                providerListEl.insertAdjacentHTML('afterend', renderPagination(1, totalPages, currentProviders.length, 'bottom'));
+            }
+        }
+    } else {
+        paginationContainers.forEach(container => container.remove());
+    }
+
+    // 重新加载模型
+    const pageProviders = currentProviders.slice(0, PROVIDERS_PER_PAGE);
     if (cachedModels.length > 0) {
         pageProviders.forEach(provider => {
             renderNotSupportedModelsSelector(provider.uuid, cachedModels, provider.notSupportedModels || []);
@@ -487,6 +552,11 @@ function renderProviderList(providers) {
 
         return `
             <div class="provider-item-detail ${healthClass} ${disabledClass} ${replacedClass}" data-uuid="${provider.uuid}">
+                <div class="bulk-select-checkbox" style="display:none;align-items:center;padding:0 8px 0 4px;">
+                    <input type="checkbox" class="provider-bulk-checkbox" data-uuid="${provider.uuid}"
+                        style="width:16px;height:16px;cursor:pointer;"
+                        onclick="event.stopPropagation();window.updateBulkDeleteCount()">
+                </div>
                 <div class="provider-item-header" onclick="window.toggleProviderDetails('${provider.uuid}')">
                     <div class="provider-info">
                         <div class="provider-name">${provider.customName || provider.uuid}${afterSaleBadgeHtml}${replacedBadgeHtml}${replacedFromHtml}${tagsHtml}</div>
@@ -1741,6 +1811,141 @@ function renderNotSupportedModelsSelector(uuid, models, notSupportedModels = [])
     container.innerHTML = html;
 }
 
+/**
+ * 切换批量选择模式
+ * @param {string} providerType - 提供商类型
+ */
+function toggleBulkSelectMode(providerType) {
+    const modal = document.querySelector('.provider-modal');
+    if (!modal) return;
+
+    const isActive = modal.classList.toggle('bulk-select-active');
+    const btn = document.getElementById('bulkSelectToggleBtn');
+    const btnText = document.getElementById('bulkSelectBtnText');
+    const checkboxes = modal.querySelectorAll('.bulk-select-checkbox');
+
+    if (isActive) {
+        // 进入批量选择模式
+        checkboxes.forEach(el => el.style.display = 'flex');
+        if (btnText) btnText.textContent = '取消批量';
+        if (btn) btn.classList.add('active');
+
+        // 插入批量操作工具栏
+        const existingBar = modal.querySelector('.bulk-action-bar');
+        if (!existingBar) {
+            const providerList = modal.querySelector('.provider-list');
+            const bar = document.createElement('div');
+            bar.className = 'bulk-action-bar';
+            bar.innerHTML = `
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;">
+                    <input type="checkbox" id="bulkSelectAll" style="width:15px;height:15px;"
+                        onchange="window.toggleSelectAll(this)">
+                    <span>全选</span>
+                </label>
+                <span id="bulkSelectedCount" style="font-size:13px;color:var(--text-secondary);">已选 0 个</span>
+                <button class="btn btn-danger btn-sm" id="bulkDeleteConfirmBtn"
+                    onclick="window.bulkDeleteProviders('${providerType}')" disabled>
+                    <i class="fas fa-trash"></i> 删除所选
+                </button>
+            `;
+            if (providerList) {
+                providerList.parentNode.insertBefore(bar, providerList);
+            }
+        }
+    } else {
+        // 退出批量选择模式
+        checkboxes.forEach(el => {
+            el.style.display = 'none';
+            const cb = el.querySelector('input');
+            if (cb) cb.checked = false;
+        });
+        if (btnText) btnText.textContent = '批量删除';
+        if (btn) btn.classList.remove('active');
+
+        const bar = modal.querySelector('.bulk-action-bar');
+        if (bar) bar.remove();
+    }
+}
+
+/**
+ * 全选/取消全选
+ */
+function toggleSelectAll(selectAllCheckbox) {
+    const modal = document.querySelector('.provider-modal');
+    if (!modal) return;
+    const checkboxes = modal.querySelectorAll('.provider-bulk-checkbox');
+    checkboxes.forEach(cb => { cb.checked = selectAllCheckbox.checked; });
+    updateBulkDeleteCount();
+}
+
+/**
+ * 更新已选数量显示
+ */
+function updateBulkDeleteCount() {
+    const modal = document.querySelector('.provider-modal');
+    if (!modal) return;
+    const checked = modal.querySelectorAll('.provider-bulk-checkbox:checked');
+    const countEl = document.getElementById('bulkSelectedCount');
+    const confirmBtn = document.getElementById('bulkDeleteConfirmBtn');
+    if (countEl) countEl.textContent = `已选 ${checked.length} 个`;
+    if (confirmBtn) confirmBtn.disabled = checked.length === 0;
+
+    // 同步全选框状态
+    const all = modal.querySelectorAll('.provider-bulk-checkbox');
+    const selectAll = document.getElementById('bulkSelectAll');
+    if (selectAll && all.length > 0) {
+        selectAll.indeterminate = checked.length > 0 && checked.length < all.length;
+        selectAll.checked = checked.length === all.length;
+    }
+}
+
+/**
+ * 执行批量删除
+ * @param {string} providerType - 提供商类型
+ */
+async function bulkDeleteProviders(providerType) {
+    const modal = document.querySelector('.provider-modal');
+    if (!modal) return;
+
+    const checked = modal.querySelectorAll('.provider-bulk-checkbox:checked');
+    const uuids = Array.from(checked).map(cb => cb.dataset.uuid);
+
+    if (uuids.length === 0) {
+        showToast(t('common.warning'), '请先选择要删除的节点', 'warning');
+        return;
+    }
+
+    if (!confirm(`确定要删除选中的 ${uuids.length} 个节点吗？此操作不可恢复。`)) return;
+
+    const confirmBtn = document.getElementById('bulkDeleteConfirmBtn');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 删除中...';
+    }
+
+    try {
+        const response = await window.apiClient.delete(
+            `/providers/${encodeURIComponent(providerType)}/bulk-delete`,
+            { uuids }
+        );
+        if (response.success) {
+            showToast(t('common.success'), `成功删除 ${response.deletedCount} 个节点`, 'success');
+            await window.apiClient.post('/reload-config');
+            // 退出批量模式并刷新
+            toggleBulkSelectMode(providerType); // 先退出，避免 bar 残留
+            await refreshProviderConfig(providerType);
+        } else {
+            showToast(t('common.error'), response.error?.message || '批量删除失败', 'error');
+        }
+    } catch (error) {
+        showToast(t('common.error'), '批量删除失败: ' + error.message, 'error');
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = '<i class="fas fa-trash"></i> 删除所选';
+        }
+    }
+}
+
 // 导出所有函数，并挂载到window对象供HTML调用
 export {
     showProviderManagerModal,
@@ -1767,6 +1972,10 @@ export {
 // 将函数挂载到window对象
 window.closeProviderModal = closeProviderModal;
 window.toggleProviderDetails = toggleProviderDetails;
+window.toggleBulkSelectMode = toggleBulkSelectMode;
+window.toggleSelectAll = toggleSelectAll;
+window.updateBulkDeleteCount = updateBulkDeleteCount;
+window.bulkDeleteProviders = bulkDeleteProviders;
 window.editProvider = editProvider;
 window.cancelEdit = cancelEdit;
 window.saveProvider = saveProvider;
@@ -1780,3 +1989,4 @@ window.deleteUnhealthyProviders = deleteUnhealthyProviders;
 window.refreshUnhealthyUuids = refreshUnhealthyUuids;
 window.goToProviderPage = goToProviderPage;
 window.refreshProviderUuid = refreshProviderUuid;
+window.changeProvidersPerPage = changeProvidersPerPage;
