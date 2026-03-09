@@ -144,8 +144,19 @@ async function importNewTokensToPool() {
     if (!poolManager) return;
 
     const pool = poolManager.providerStatus['openai-codex-oauth'] || [];
-    const existingPaths = new Set(
-        pool.map(p => path.resolve(process.cwd(), p.config.CODEX_OAUTH_CREDS_FILE_PATH || ''))
+    // 用 email 去重，避免路径格式不一致导致重复导入
+    const existingEmails = new Set(
+        pool.map(p => {
+            const filePath = p.config.CODEX_OAUTH_CREDS_FILE_PATH || '';
+            try {
+                const absPath = path.resolve(process.cwd(), filePath);
+                if (fs.existsSync(absPath)) {
+                    const cred = JSON.parse(fs.readFileSync(absPath, 'utf8'));
+                    return cred.email || '';
+                }
+            } catch (e) { /* skip */ }
+            return '';
+        }).filter(Boolean)
     );
 
     const files = fs.readdirSync(tokenDir).filter(f => f.endsWith('.json'));
@@ -153,10 +164,11 @@ async function importNewTokensToPool() {
 
     for (const file of files) {
         const absPath = path.resolve(path.join(tokenDir, file));
-        if (existingPaths.has(absPath)) continue;
         try {
             const cred = JSON.parse(fs.readFileSync(absPath, 'utf8'));
-            if (cred.type === 'codex' && cred.access_token) credentials.push(cred);
+            if (cred.type === 'codex' && cred.access_token && !existingEmails.has(cred.email)) {
+                credentials.push(cred);
+            }
         } catch (e) { /* skip */ }
     }
 
