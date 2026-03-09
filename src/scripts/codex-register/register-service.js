@@ -79,10 +79,12 @@ export async function runRegisterScript(count, workers = 3) {
     };
 
     return new Promise((resolve, reject) => {
+        const venv311Python = path.join(SCRIPT_DIR, 'venv311', 'bin', 'python3');
         const venvPython = path.join(SCRIPT_DIR, 'venv', 'bin', 'python3');
         const venv13Python = path.join(SCRIPT_DIR, 'venv13', 'bin', 'python3');
         let actualPython = 'python3';
-        if (fs.existsSync(venv13Python)) actualPython = venv13Python;
+        if (fs.existsSync(venv311Python)) actualPython = venv311Python;
+        else if (fs.existsSync(venv13Python)) actualPython = venv13Python;
         else if (fs.existsSync(venvPython)) actualPython = venvPython;
 
         const args = [SCRIPT_PATH, '--batch', '--count', String(count), '--workers', String(workers)];
