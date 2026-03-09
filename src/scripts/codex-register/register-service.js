@@ -176,7 +176,7 @@ async function importNewTokensToPool() {
 
     logger.info(`[CodexRegister] 导入 ${credentials.length} 个新账号到池...`);
     const { batchImportCodexCredentialsStream } = await import('../../auth/oauth-handlers.js');
-    await batchImportCodexCredentialsStream(credentials, null, false);
+    await batchImportCodexCredentialsStream(credentials, null, true); // skipDuplicateCheck=true，已用 email 去重
 
     // 导入完成后，从文件重新加载 providerPools 到 poolManager，确保内存与文件一致
     try {
