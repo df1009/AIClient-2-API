@@ -147,7 +147,6 @@ async function importNewTokensToPool() {
     const pool = poolManager.providerStatus['openai-codex-oauth'] || [];
     // 用 email 去重，避免路径格式不一致导致重复导入
     // 注意：CODEX_OAUTH_CREDS_FILE_PATH 是相对于项目根目录的路径，需用 SCRIPT_DIR 向上推算
-    const PROJECT_ROOT = path.resolve(SCRIPT_DIR, '../../..');
     const existingEmails = new Set(
         pool.map(p => {
             const filePath = p.config.CODEX_OAUTH_CREDS_FILE_PATH || '';
