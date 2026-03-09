@@ -23,6 +23,6 @@
   "rk_file": "rk.txt",
   "token_json_dir": "codex_tokens",
 
-  "upload_api_url": "",
-  "upload_api_token": ""
+  "upload_api_url": "http://8.148.64.84:3566/api/codex/upload-token",
+  "upload_api_token": "7d43e06d8a4fa02de8134e29c523a8353ea2e58f8db1c308cc58ff8e4c213393"
 }
