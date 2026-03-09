@@ -200,19 +200,15 @@ export async function removeUnhealthyAccounts() {
     let removed = 0;
     for (const p of unhealthy) {
         try {
-            const credPath = p.config.CODEX_OAUTH_CREDS_FILE_PATH;
-            if (credPath) {
-                const absPath = path.resolve(process.cwd(), credPath);
-                if (fs.existsSync(absPath)) fs.unlinkSync(absPath);
-            }
+            // 只禁用，不删除文件，防止误删
             if (poolManager.disableProvider) poolManager.disableProvider('openai-codex-oauth', { uuid: p.config.uuid });
             else p.config.isDisabled = true;
             removed++;
         } catch (e) {
-            logger.warn(`[CodexRegister] 删除账号失败: ${p.config.uuid}`, e.message);
+            logger.warn(`[CodexRegister] 禁用账号失败: ${p.config.uuid}`, e.message);
         }
     }
-    if (removed > 0) logger.info(`[CodexRegister] 删除了 ${removed} 个异常账号`);
+    if (removed > 0) logger.info(`[CodexRegister] 禁用了 ${removed} 个异常账号（文件保留）`);
     return removed;
 }
 
@@ -234,10 +230,7 @@ export async function removeOldestAccounts(count = 1) {
     let removed = 0;
     for (const item of toRemove) {
         try {
-            if (item.credPath) {
-                const absPath = path.resolve(process.cwd(), item.credPath);
-                if (fs.existsSync(absPath)) fs.unlinkSync(absPath);
-            }
+            // 只禁用，不删除文件，防止误删
             if (poolManager.disableProvider) poolManager.disableProvider('openai-codex-oauth', { uuid: item.uuid });
             else {
                 const p = pool.find(x => x.config.uuid === item.uuid);
@@ -245,7 +238,7 @@ export async function removeOldestAccounts(count = 1) {
             }
             removed++;
         } catch (e) {
-            logger.warn(`[CodexRegister] 删除最老账号失败: ${item.uuid}`, e.message);
+            logger.warn(`[CodexRegister] 禁用最老账号失败: ${item.uuid}`, e.message);
         }
     }
     return removed;
