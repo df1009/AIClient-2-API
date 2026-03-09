@@ -658,6 +658,13 @@ export class ProviderPoolManager {
      */
     initializeProviderStatus() {
         for (const providerType in this.providerPools) {
+            // 保留已有的运行时状态索引（usageCount、errorCount、lastUsed 等）
+            const existingStatusByUuid = {};
+            if (this.providerStatus[providerType]) {
+                for (const p of this.providerStatus[providerType]) {
+                    if (p.uuid) existingStatusByUuid[p.uuid] = p.config;
+                }
+            }
             this.providerStatus[providerType] = [];
             this.roundRobinIndex[providerType] = 0; // Initialize round-robin index for each type
             // 只有在锁不存在时才初始化，避免在运行中被重置导致并发问题
@@ -665,6 +672,19 @@ export class ProviderPoolManager {
                 this._selectionLocks[providerType] = Promise.resolve();
             }
             this.providerPools[providerType].forEach((providerConfig) => {
+                // 如果已有运行时状态，合并保留（避免 reload 时清零）
+                const existing = existingStatusByUuid[providerConfig.uuid];
+                if (existing) {
+                    providerConfig.usageCount = existing.usageCount;
+                    providerConfig.errorCount = existing.errorCount;
+                    providerConfig.lastUsed = existing.lastUsed;
+                    providerConfig.isHealthy = existing.isHealthy;
+                    providerConfig.needsRefresh = existing.needsRefresh;
+                    providerConfig.refreshCount = existing.refreshCount;
+                    providerConfig.lastErrorTime = existing.lastErrorTime;
+                    providerConfig.lastErrorMessage = existing.lastErrorMessage;
+                    providerConfig._lastSelectionSeq = existing._lastSelectionSeq;
+                }
                 // Ensure initial health and usage stats are present in the config
                 providerConfig.isHealthy = providerConfig.isHealthy !== undefined ? providerConfig.isHealthy : true;
                 providerConfig.isDisabled = providerConfig.isDisabled !== undefined ? providerConfig.isDisabled : false;
