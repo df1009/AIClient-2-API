@@ -1086,6 +1086,51 @@ export async function handleBatchImportCodexCredentials(req, res) {
 }
 
 /**
+ * 接收单个 Codex token JSON 文件上传并导入池
+ */
+export async function handleCodexUploadToken(req, res) {
+    try {
+        // 读取 multipart 数据，提取 JSON 内容
+        const chunks = [];
+        await new Promise((resolve, reject) => {
+            req.on('data', chunk => chunks.push(chunk));
+            req.on('end', resolve);
+            req.on('error', reject);
+        });
+        const raw = Buffer.concat(chunks).toString('utf8');
+
+        // 从 multipart body 中提取 JSON 内容
+        // 找到第一个 { 到最后一个 } 之间的内容
+        const jsonStart = raw.indexOf('{');
+        const jsonEnd = raw.lastIndexOf('}');
+        if (jsonStart === -1 || jsonEnd === -1) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: '无法解析 JSON 内容' }));
+            return true;
+        }
+
+        const jsonStr = raw.slice(jsonStart, jsonEnd + 1);
+        const cred = JSON.parse(jsonStr);
+
+        if (!cred.type || cred.type !== 'codex' || !cred.access_token) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: '无效的 Codex token 格式' }));
+            return true;
+        }
+
+        const result = await batchImportCodexCredentialsStream([cred], null, false);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, result }));
+        return true;
+    } catch (error) {
+        logger.error('[CodexUploadToken] error:', error.message);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: error.message }));
+        return true;
+    }
+}
+
+/**
  * 自动注册 Codex 账号
  */
 export async function handleCodexAutoRegister(req, res) {

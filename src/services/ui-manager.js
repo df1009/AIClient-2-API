@@ -407,6 +407,11 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
         return await oauthApi.handleBatchImportCodexCredentials(req, res);
     }
 
+    // Codex 单个 token 文件上传
+    if (method === 'POST' && pathParam === '/api/codex/upload-token') {
+        return await oauthApi.handleCodexUploadToken(req, res);
+    }
+
     // Codex 自动注册
     if (method === 'POST' && pathParam === '/api/codex/auto-register') {
         return await oauthApi.handleCodexAutoRegister(req, res);
