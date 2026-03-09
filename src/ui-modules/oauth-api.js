@@ -1084,3 +1084,85 @@ export async function handleBatchImportCodexCredentials(req, res) {
         return true;
     }
 }
+
+/**
+ * 自动注册 Codex 账号
+ */
+export async function handleCodexAutoRegister(req, res) {
+    try {
+        const body = await getRequestBody(req);
+        const { count = 1, workers = 3 } = body;
+
+        if (!Number.isInteger(count) || count < 1 || count > 50) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: '注册数量需在 1-50 之间' }));
+            return true;
+        }
+
+        const { runRegisterScript } = await import('../scripts/codex-register/register-service.js');
+        runRegisterScript(count, workers).catch(e => logger.error('[CodexRegister] 注册任务出错:', e.message));
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: `已启动注册任务，数量: ${count}，并发: ${workers}` }));
+        return true;
+    } catch (error) {
+        logger.error('[CodexRegister] handleCodexAutoRegister error:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: error.message }));
+        return true;
+    }
+}
+
+/**
+ * 获取注册任务状态
+ */
+export async function handleCodexRegisterStatus(req, res) {
+    try {
+        const { getRegisterTaskStatus, getCodexPoolStatus, getMaintenanceSchedulerStatus } = await import('../scripts/codex-register/register-service.js');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            success: true,
+            task: getRegisterTaskStatus(),
+            pool: getCodexPoolStatus(),
+            maintenance: getMaintenanceSchedulerStatus(),
+        }));
+        return true;
+    } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: error.message }));
+        return true;
+    }
+}
+
+/**
+ * 启动/停止/立即执行 定时维护任务
+ */
+export async function handleCodexMaintenanceControl(req, res) {
+    try {
+        const body = await getRequestBody(req);
+        const { action } = body;
+        const { startMaintenanceScheduler, stopMaintenanceScheduler, runMaintenanceTask } = await import('../scripts/codex-register/register-service.js');
+
+        if (action === 'start') {
+            startMaintenanceScheduler();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: '定时维护任务已启动' }));
+        } else if (action === 'stop') {
+            stopMaintenanceScheduler();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: '定时维护任务已停止' }));
+        } else if (action === 'run') {
+            runMaintenanceTask().catch(e => logger.error('[CodexRegister] 维护任务出错:', e.message));
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: '维护任务已触发' }));
+        } else {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: '无效 action，支持: start|stop|run' }));
+        }
+        return true;
+    } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: error.message }));
+        return true;
+    }
+}

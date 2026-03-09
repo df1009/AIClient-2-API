@@ -407,6 +407,21 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
         return await oauthApi.handleBatchImportCodexCredentials(req, res);
     }
 
+    // Codex 自动注册
+    if (method === 'POST' && pathParam === '/api/codex/auto-register') {
+        return await oauthApi.handleCodexAutoRegister(req, res);
+    }
+
+    // Codex 注册任务状态
+    if (method === 'GET' && pathParam === '/api/codex/register-status') {
+        return await oauthApi.handleCodexRegisterStatus(req, res);
+    }
+
+    // Codex 定时维护控制
+    if (method === 'POST' && pathParam === '/api/codex/maintenance') {
+        return await oauthApi.handleCodexMaintenanceControl(req, res);
+    }
+
     // Import AWS SSO credentials for Kiro
     if (method === 'POST' && pathParam === '/api/kiro/import-aws-credentials') {
         return await oauthApi.handleImportAwsCredentials(req, res);
