@@ -177,6 +177,21 @@ async function importNewTokensToPool() {
     logger.info(`[CodexRegister] 导入 ${credentials.length} 个新账号到池...`);
     const { batchImportCodexCredentialsStream } = await import('../../auth/oauth-handlers.js');
     await batchImportCodexCredentialsStream(credentials, null, false);
+
+    // 导入完成后，从文件重新加载 providerPools 到 poolManager，确保内存与文件一致
+    try {
+        const poolManager = getProviderPoolManager();
+        if (poolManager) {
+            const poolsFilePath = path.join(process.cwd(), 'configs', 'provider_pools.json');
+            const poolsData = JSON.parse(fs.readFileSync(poolsFilePath, 'utf8'));
+            poolManager.providerPools = poolsData;
+            poolManager.initializeProviderStatus();
+            logger.info(`[CodexRegister] 池已从文件重新加载，当前 codex 账号数: ${(poolManager.providerStatus['openai-codex-oauth'] || []).length}`);
+        }
+    } catch (e) {
+        logger.warn(`[CodexRegister] 重新加载池失败: ${e.message}`);
+    }
+
     logger.info(`[CodexRegister] 导入完成`);
 }
 
