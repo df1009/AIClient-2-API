@@ -1145,7 +1145,7 @@ export async function handleCodexAutoRegister(req, res) {
         }
 
         const { runRegisterScript } = await import('../scripts/codex-register/register-service.js');
-        runRegisterScript(count, workers).catch(e => logger.error('[CodexRegister] 注册任务出错:', e.message));
+        runRegisterScript(count, workers).catch(e => logger.error('[CodexRegister] 注册任务出错:', String(e)));
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: `已启动注册任务，数量: ${count}，并发: ${workers}` }));
@@ -1153,7 +1153,7 @@ export async function handleCodexAutoRegister(req, res) {
     } catch (error) {
         logger.error('[CodexRegister] handleCodexAutoRegister error:', error);
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: error.message }));
+        res.end(JSON.stringify({ success: false, error: error?.message || String(error) }));
         return true;
     }
 }

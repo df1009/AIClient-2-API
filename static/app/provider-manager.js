@@ -1111,7 +1111,8 @@ function showCodexAutoRegisterModal() {
         if (pollTimer) return;
         pollTimer = setInterval(async () => {
             try {
-                const resp = await fetch('/api/codex/register-status');
+                const _token = localStorage.getItem('authToken');
+                const resp = await fetch('/api/codex/register-status', { headers: { 'Authorization': _token ? `Bearer ${_token}` : '' } });
                 const data = await resp.json();
                 if (!data.success) return;
                 const task = data.task;
@@ -1138,9 +1139,10 @@ function showCodexAutoRegisterModal() {
         statusText.textContent = '🚀 正在启动注册任务...';
         logDiv.textContent = '';
         try {
+            const token = localStorage.getItem('authToken');
             const resp = await fetch('/api/codex/auto-register', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
                 body: JSON.stringify({ count, workers })
             });
             const data = await resp.json();
@@ -1160,9 +1162,10 @@ function showCodexAutoRegisterModal() {
     // 定时维护控制
     async function maintenanceAction(action) {
         try {
+            const _token = localStorage.getItem('authToken');
             const resp = await fetch('/api/codex/maintenance', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'Authorization': _token ? `Bearer ${_token}` : '' },
                 body: JSON.stringify({ action })
             });
             const data = await resp.json();
