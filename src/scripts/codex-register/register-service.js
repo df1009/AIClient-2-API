@@ -137,7 +137,8 @@ export async function runRegisterScript(count, workers = 3) {
 }
 
 async function importNewTokensToPool() {
-    const tokenDir = path.join(process.cwd(), 'configs', 'codex');
+    const PROJECT_ROOT = path.resolve(SCRIPT_DIR, '../../..');
+    const tokenDir = path.join(PROJECT_ROOT, 'configs', 'codex');
     if (!fs.existsSync(tokenDir)) return;
 
     const poolManager = getProviderPoolManager();
@@ -145,11 +146,16 @@ async function importNewTokensToPool() {
 
     const pool = poolManager.providerStatus['openai-codex-oauth'] || [];
     // 用 email 去重，避免路径格式不一致导致重复导入
+    // 注意：CODEX_OAUTH_CREDS_FILE_PATH 是相对于项目根目录的路径，需用 SCRIPT_DIR 向上推算
+    const PROJECT_ROOT = path.resolve(SCRIPT_DIR, '../../..');
     const existingEmails = new Set(
         pool.map(p => {
             const filePath = p.config.CODEX_OAUTH_CREDS_FILE_PATH || '';
             try {
-                const absPath = path.resolve(process.cwd(), filePath);
+                // 尝试相对于项目根目录解析
+                const absPath = path.isAbsolute(filePath)
+                    ? filePath
+                    : path.resolve(PROJECT_ROOT, filePath);
                 if (fs.existsSync(absPath)) {
                     const cred = JSON.parse(fs.readFileSync(absPath, 'utf8'));
                     return cred.email || '';
@@ -182,7 +188,7 @@ async function importNewTokensToPool() {
     try {
         const poolManager = getProviderPoolManager();
         if (poolManager) {
-            const poolsFilePath = path.join(process.cwd(), 'configs', 'provider_pools.json');
+            const poolsFilePath = path.join(path.resolve(SCRIPT_DIR, '../../..'), 'configs', 'provider_pools.json');
             const poolsData = JSON.parse(fs.readFileSync(poolsFilePath, 'utf8'));
             poolManager.providerPools = poolsData;
             poolManager.initializeProviderStatus();
