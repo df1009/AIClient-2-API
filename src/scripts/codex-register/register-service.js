@@ -70,6 +70,7 @@ export async function runRegisterScript(count, workers = 3) {
         HTTP_PROXY: config.proxy || '',
         HTTPS_PROXY: config.proxy || '',
         ALL_PROXY: config.proxy || '',
+        PROXY: config.proxy || '',
         ENABLE_OAUTH: 'true',
         OAUTH_REQUIRED: 'false',
         TOKEN_JSON_DIR: tokenDir,
