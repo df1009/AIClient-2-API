@@ -166,16 +166,20 @@ export function createRequestHandler(config, providerPoolManager) {
         }
 
         // 1. 执行认证流程（只有 type='auth' 的插件参与）
-        const authResult = await pluginManager.executeAuth(req, res, requestUrl, currentConfig);
-        if (authResult.handled) {
-            // 认证插件已处理请求（如发送了错误响应）
-            return;
-        }
-        if (!authResult.authorized) {
-            // 没有认证插件授权，返回 401
-            res.writeHead(401, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: { message: 'Unauthorized: API key is invalid or missing.' } }));
-            return;
+        // UI 管理路径（/api/）跳过插件鉴权，由 ui-manager 的 session token 验证处理
+        const isUiApiPath = path.startsWith('/api/');
+        if (!isUiApiPath) {
+            const authResult = await pluginManager.executeAuth(req, res, requestUrl, currentConfig);
+            if (authResult.handled) {
+                // 认证插件已处理请求（如发送了错误响应）
+                return;
+            }
+            if (!authResult.authorized) {
+                // 没有认证插件授权，返回 401
+                res.writeHead(401, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: { message: 'Unauthorized: API key is invalid or missing.' } }));
+                return;
+            }
         }
         
         // 2. 执行普通中间件（type!='auth' 的插件）
