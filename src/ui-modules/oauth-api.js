@@ -1163,13 +1163,14 @@ export async function handleCodexAutoRegister(req, res) {
  */
 export async function handleCodexRegisterStatus(req, res) {
     try {
-        const { getRegisterTaskStatus, getCodexPoolStatus, getMaintenanceSchedulerStatus } = await import('../scripts/codex-register/register-service.js');
+        const { getRegisterTaskStatus, getCodexPoolStatus, getMaintenanceSchedulerStatus, getHealthCheckStatus } = await import('../scripts/codex-register/register-service.js');
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
             success: true,
             task: getRegisterTaskStatus(),
             pool: getCodexPoolStatus(),
             maintenance: getMaintenanceSchedulerStatus(),
+            healthCheck: getHealthCheckStatus(),
         }));
         return true;
     } catch (error) {
@@ -1180,13 +1181,31 @@ export async function handleCodexRegisterStatus(req, res) {
 }
 
 /**
- * 启动/停止/立即执行 定时维护任务
+ * 启动/停止/立即执行 定时维护任务，支持动态更新配置
  */
 export async function handleCodexMaintenanceControl(req, res) {
     try {
         const body = await getRequestBody(req);
-        const { action } = body;
-        const { startMaintenanceScheduler, stopMaintenanceScheduler, runMaintenanceTask } = await import('../scripts/codex-register/register-service.js');
+        const { action, interval_ms, count, workers, target_pool_size } = body;
+        const { startMaintenanceScheduler, stopMaintenanceScheduler, runMaintenanceTask, getRegisterConfig, saveRegisterConfig } = await import('../scripts/codex-register/register-service.js');
+
+        // 如果传了配置参数，先更新 config
+        if (interval_ms !== undefined || count !== undefined || workers !== undefined || target_pool_size !== undefined) {
+            const config = getRegisterConfig();
+            if (interval_ms !== undefined && Number.isInteger(interval_ms) && interval_ms >= 60000) {
+                config.maintenance_interval_ms = interval_ms;
+            }
+            if (count !== undefined && Number.isInteger(count) && count >= 1 && count <= 50) {
+                config.register_count = count;
+            }
+            if (workers !== undefined && Number.isInteger(workers) && workers >= 1 && workers <= 20) {
+                config.register_workers = workers;
+            }
+            if (target_pool_size !== undefined && Number.isInteger(target_pool_size) && target_pool_size >= 1 && target_pool_size <= 500) {
+                config.target_pool_size = target_pool_size;
+            }
+            saveRegisterConfig(config);
+        }
 
         if (action === 'start') {
             startMaintenanceScheduler();
@@ -1200,9 +1219,60 @@ export async function handleCodexMaintenanceControl(req, res) {
             runMaintenanceTask().catch(e => logger.error('[CodexRegister] 维护任务出错:', e.message));
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true, message: '维护任务已触发' }));
+        } else if (action === 'update-config') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: '配置已更新' }));
         } else {
             res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, error: '无效 action，支持: start|stop|run' }));
+            res.end(JSON.stringify({ success: false, error: '无效 action，支持: start|stop|run|update-config' }));
+        }
+        return true;
+    } catch (error) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: error.message }));
+        return true;
+    }
+}
+
+/**
+ * 健康检测控制：start|stop|run，支持动态更新 check_interval_ms / check_workers
+ */
+export async function handleCodexHealthCheckControl(req, res) {
+    try {
+        const body = await getRequestBody(req);
+        const { action, interval_ms, workers } = body;
+        const { startHealthCheckScheduler, stopHealthCheckScheduler, runAccountHealthCheck, getRegisterConfig, saveRegisterConfig } = await import('../scripts/codex-register/register-service.js');
+
+        // 动态更新检测配置
+        if (interval_ms !== undefined || workers !== undefined) {
+            const config = getRegisterConfig();
+            if (interval_ms !== undefined && Number.isInteger(interval_ms) && interval_ms >= 10000) {
+                config.check_interval_ms = interval_ms;
+            }
+            if (workers !== undefined && Number.isInteger(workers) && workers >= 1 && workers <= 20) {
+                config.check_workers = workers;
+            }
+            saveRegisterConfig(config);
+        }
+
+        if (action === 'start') {
+            startHealthCheckScheduler();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: '定时健康检测已启动' }));
+        } else if (action === 'stop') {
+            stopHealthCheckScheduler();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: '定时健康检测已停止' }));
+        } else if (action === 'run') {
+            runAccountHealthCheck().catch(e => logger.error('[CodexCheck] 检测任务出错:', e.message));
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: '健康检测已触发' }));
+        } else if (action === 'update-config') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, message: '检测配置已更新' }));
+        } else {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: '无效 action，支持: start|stop|run|update-config' }));
         }
         return true;
     } catch (error) {

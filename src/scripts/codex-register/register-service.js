@@ -18,9 +18,39 @@ let registerTaskRunning = false;
 let registerTaskLog = [];
 let registerTaskResult = null;
 let maintenanceTimer = null;
+let healthCheckTimer = null;
+let healthCheckRunning = false;
+let healthCheckLastResult = null;
 
-const MAINTENANCE_INTERVAL = 10 * 60 * 1000;
-const TARGET_POOL_SIZE = 50;
+function getTargetPoolSize() {
+    const config = getRegisterConfig();
+    return config.target_pool_size || 50;
+}
+
+function getMaintenanceInterval() {
+    const config = getRegisterConfig();
+    return config.maintenance_interval_ms || 10 * 60 * 1000;
+}
+
+function getCheckInterval() {
+    const config = getRegisterConfig();
+    return config.check_interval_ms || 60 * 1000;
+}
+
+function getCheckWorkers() {
+    const config = getRegisterConfig();
+    return config.check_workers || 5;
+}
+
+function getRegisterCount() {
+    const config = getRegisterConfig();
+    return config.register_count || 3;
+}
+
+function getRegisterWorkers() {
+    const config = getRegisterConfig();
+    return config.register_workers || 3;
+}
 
 export function getRegisterConfig() {
     try {
@@ -135,6 +165,161 @@ export async function runRegisterScript(count, workers = 3) {
             reject(err);
         });
     });
+}
+
+/**
+ * 检测单个 Codex 账号是否可用
+ * 通过调用 getUsageLimits 接口验证，401/网络错误均视为不可用
+ */
+async function checkSingleAccount(providerEntry) {
+    try {
+        const { getServiceAdapter } = await import('../../providers/adapter.js');
+        const config = { ...providerEntry.config, MODEL_PROVIDER: 'openai-codex-oauth' };
+        const adapter = getServiceAdapter(config);
+        await adapter.getUsageLimits();
+        return { uuid: providerEntry.config.uuid, healthy: true };
+    } catch (e) {
+        const status = e.response?.status;
+        const healthy = !(status === 401 || status === 403 || e.credentialMarkedUnhealthy);
+        // 网络超时等非鉴权错误，保守处理视为健康（避免误删）
+        if (!status && !e.credentialMarkedUnhealthy) {
+            logger.warn(`[CodexCheck] UUID ${providerEntry.config.uuid} 检测超时/网络错误，保守视为健康: ${e.message}`);
+            return { uuid: providerEntry.config.uuid, healthy: true };
+        }
+        return { uuid: providerEntry.config.uuid, healthy };
+    }
+}
+
+/**
+ * 真正从池中删除账号（providerPools + providerStatus + 文件）
+ */
+async function deleteAccountFromPool(uuid) {
+    const poolManager = getProviderPoolManager();
+    if (!poolManager) return false;
+    const providerType = 'openai-codex-oauth';
+
+    // 找到凭证文件路径
+    const pool = poolManager.providerPools?.[providerType] || [];
+    const entry = pool.find(p => p.uuid === uuid);
+    const credPath = entry?.CODEX_OAUTH_CREDS_FILE_PATH;
+
+    // 从 providerPools 删除
+    if (poolManager.providerPools?.[providerType]) {
+        poolManager.providerPools[providerType] = poolManager.providerPools[providerType].filter(p => p.uuid !== uuid);
+    }
+    // 从 providerStatus 删除
+    if (poolManager.providerStatus?.[providerType]) {
+        poolManager.providerStatus[providerType] = poolManager.providerStatus[providerType].filter(p => p.config.uuid !== uuid);
+    }
+    // 触发保存
+    poolManager._debouncedSave(providerType);
+
+    // 删除凭证文件
+    if (credPath) {
+        try {
+            const PROJECT_ROOT = path.resolve(SCRIPT_DIR, '../../..');
+            const absPath = path.isAbsolute(credPath) ? credPath : path.resolve(PROJECT_ROOT, credPath);
+            if (fs.existsSync(absPath)) {
+                fs.unlinkSync(absPath);
+                logger.info(`[CodexCheck] 已删除凭证文件: ${absPath}`);
+            }
+        } catch (e) {
+            logger.warn(`[CodexCheck] 删除凭证文件失败: ${e.message}`);
+        }
+    }
+    return true;
+}
+
+/**
+ * 并发健康检测，不可用账号直接删除
+ */
+export async function runAccountHealthCheck() {
+    if (healthCheckRunning) {
+        logger.info('[CodexCheck] 健康检测已在运行，跳过');
+        return healthCheckLastResult;
+    }
+    healthCheckRunning = true;
+    const startTime = Date.now();
+    logger.info('[CodexCheck] 开始账号健康检测...');
+
+    try {
+        const poolManager = getProviderPoolManager();
+        if (!poolManager) {
+            healthCheckRunning = false;
+            return { checked: 0, removed: 0, error: 'No poolManager' };
+        }
+
+        const pool = poolManager.providerStatus?.['openai-codex-oauth'] || [];
+        if (pool.length === 0) {
+            logger.info('[CodexCheck] 池为空，跳过检测');
+            healthCheckRunning = false;
+            healthCheckLastResult = { checked: 0, removed: 0, time: Date.now() };
+            return healthCheckLastResult;
+        }
+
+        const workers = getCheckWorkers();
+        logger.info(`[CodexCheck] 检测 ${pool.length} 个账号，并发: ${workers}`);
+
+        // 并发控制：分批处理
+        const results = [];
+        for (let i = 0; i < pool.length; i += workers) {
+            const batch = pool.slice(i, i + workers);
+            const batchResults = await Promise.all(batch.map(p => checkSingleAccount(p)));
+            results.push(...batchResults);
+        }
+
+        // 删除不可用账号
+        const toRemove = results.filter(r => !r.healthy);
+        for (const item of toRemove) {
+            logger.info(`[CodexCheck] 账号不可用，删除: ${item.uuid}`);
+            await deleteAccountFromPool(item.uuid);
+        }
+
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        healthCheckLastResult = {
+            checked: results.length,
+            healthy: results.filter(r => r.healthy).length,
+            removed: toRemove.length,
+            time: Date.now(),
+            elapsedSec: elapsed,
+        };
+        logger.info(`[CodexCheck] 检测完成，共 ${results.length} 个，健康 ${healthCheckLastResult.healthy} 个，删除 ${toRemove.length} 个，耗时 ${elapsed}s`);
+        return healthCheckLastResult;
+    } catch (e) {
+        logger.error('[CodexCheck] 健康检测出错:', e.message);
+        return { checked: 0, removed: 0, error: e.message };
+    } finally {
+        healthCheckRunning = false;
+    }
+}
+
+export function getHealthCheckStatus() {
+    return {
+        running: healthCheckRunning,
+        timerActive: healthCheckTimer !== null,
+        interval: getCheckInterval(),
+        workers: getCheckWorkers(),
+        lastResult: healthCheckLastResult,
+    };
+}
+
+export function startHealthCheckScheduler() {
+    if (healthCheckTimer) clearInterval(healthCheckTimer);
+    const interval = getCheckInterval();
+    logger.info(`[CodexCheck] 启动定时健康检测，间隔: ${interval / 1000}s`);
+    // 启动时立即跑一次
+    runAccountHealthCheck().catch(e => logger.error('[CodexCheck] 首次检测失败:', e.message));
+    healthCheckTimer = setInterval(() => {
+        runAccountHealthCheck().catch(e => logger.error('[CodexCheck] 定时检测失败:', e.message));
+    }, interval);
+}
+
+export function stopHealthCheckScheduler() {
+    if (healthCheckTimer) {
+        clearInterval(healthCheckTimer);
+        healthCheckTimer = null;
+        logger.info('[CodexCheck] 已停止定时健康检测');
+    }
 }
 
 async function importNewTokensToPool() {
@@ -287,17 +472,19 @@ export async function runMaintenanceTask() {
         const status = getCodexPoolStatus();
         logger.info(`[CodexRegister] 账号池: 总=${status.total} 健康=${status.healthy} 异常=${status.unhealthy}`);
 
+        const regCount = getRegisterCount();
+        const regWorkers = getRegisterWorkers();
         if (status.unhealthy > 0) {
             const removed = await removeUnhealthyAccounts();
             const cur = getCodexPoolStatus();
-            const need = Math.min(removed, TARGET_POOL_SIZE - cur.healthy);
-            if (need > 0) await runRegisterScript(need, 3);
+            const need = Math.min(removed, getTargetPoolSize() - cur.healthy);
+            if (need > 0) await runRegisterScript(Math.min(need, regCount), regWorkers);
         } else {
-            logger.info('[CodexRegister] 无异常账号，轮换：注册1个新账号...');
-            await runRegisterScript(1, 1);
+            logger.info(`[CodexRegister] 无异常账号，轮换：注册 ${regCount} 个新账号...`);
+            await runRegisterScript(regCount, regWorkers);
             const cur = getCodexPoolStatus();
-            if (cur.healthy > TARGET_POOL_SIZE) {
-                await removeOldestAccounts(cur.healthy - TARGET_POOL_SIZE);
+            if (cur.healthy > getTargetPoolSize()) {
+                await removeOldestAccounts(cur.healthy - getTargetPoolSize());
             }
         }
         logger.info('[CodexRegister] 维护任务完成');
@@ -308,8 +495,9 @@ export async function runMaintenanceTask() {
 
 export function startMaintenanceScheduler() {
     if (maintenanceTimer) clearInterval(maintenanceTimer);
-    logger.info(`[CodexRegister] 启动定时维护，间隔: ${MAINTENANCE_INTERVAL / 60000} 分钟`);
-    maintenanceTimer = setInterval(runMaintenanceTask, MAINTENANCE_INTERVAL);
+    const interval = getMaintenanceInterval();
+    logger.info(`[CodexRegister] 启动定时维护，间隔: ${interval / 60000} 分钟`);
+    maintenanceTimer = setInterval(runMaintenanceTask, interval);
 }
 
 export function stopMaintenanceScheduler() {
@@ -321,5 +509,11 @@ export function stopMaintenanceScheduler() {
 }
 
 export function getMaintenanceSchedulerStatus() {
-    return { running: maintenanceTimer !== null, interval: MAINTENANCE_INTERVAL, targetPoolSize: TARGET_POOL_SIZE };
+    return {
+        running: maintenanceTimer !== null,
+        interval: getMaintenanceInterval(),
+        targetPoolSize: getTargetPoolSize(),
+        registerCount: getRegisterCount(),
+        registerWorkers: getRegisterWorkers(),
+    };
 }

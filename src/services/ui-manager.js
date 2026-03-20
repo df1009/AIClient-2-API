@@ -427,6 +427,11 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
         return await oauthApi.handleCodexMaintenanceControl(req, res);
     }
 
+    // Codex 健康检测控制
+    if (method === 'POST' && pathParam === '/api/codex/health-check') {
+        return await oauthApi.handleCodexHealthCheckControl(req, res);
+    }
+
     // Import AWS SSO credentials for Kiro
     if (method === 'POST' && pathParam === '/api/kiro/import-aws-credentials') {
         return await oauthApi.handleImportAwsCredentials(req, res);

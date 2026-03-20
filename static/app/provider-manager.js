@@ -1051,41 +1051,60 @@ function showCodexAutoRegisterModal() {
     modal.style.display = 'flex';
 
     modal.innerHTML = `
-        <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-content" style="max-width: 560px; max-height: 90vh; overflow-y: auto;">
             <div class="modal-header">
                 <h3><i class="fas fa-robot"></i> 自动注册 Codex 账号</h3>
                 <button class="modal-close">&times;</button>
             </div>
             <div class="modal-body">
-                <div style="margin-bottom: 16px; padding: 12px; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 8px;">
-                    <p style="margin: 0; font-size: 14px; color: #3730a3;">
-                        <i class="fas fa-info-circle"></i>
-                        自动注册新的 ChatGPT 账号并获取 Codex OAuth Token，注册完成后自动导入账号池。
-                    </p>
+                <div style="margin-bottom:16px;padding:12px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;">
+                    <p style="margin:0;font-size:14px;color:#3730a3;"><i class="fas fa-info-circle"></i> 自动注册新的 ChatGPT 账号并获取 Codex OAuth Token，注册完成后自动导入账号池。</p>
                 </div>
-                <div class="form-group" style="margin-bottom: 16px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">注册数量</label>
-                    <input type="number" id="autoRegisterCount" min="1" max="50" value="5"
-                        style="width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px;">
-                    <div style="font-size: 12px; color: #6b7280; margin-top: 4px;">最多 50 个</div>
+                <div style="display:flex;gap:12px;margin-bottom:16px;">
+                    <div style="flex:1;"><label style="display:block;margin-bottom:6px;font-weight:600;color:#374151;font-size:13px;">注册数量</label>
+                    <input type="number" id="autoRegisterCount" min="1" max="50" value="5" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;"></div>
+                    <div style="flex:1;"><label style="display:block;margin-bottom:6px;font-weight:600;color:#374151;font-size:13px;">并发数</label>
+                    <input type="number" id="autoRegisterWorkers" min="1" max="10" value="3" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;"></div>
                 </div>
-                <div class="form-group" style="margin-bottom: 16px;">
-                    <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">并发数</label>
-                    <input type="number" id="autoRegisterWorkers" min="1" max="10" value="3"
-                        style="width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px;">
+                <div id="autoRegisterStatus" style="display:none;margin-bottom:16px;padding:12px;background:#f3f4f6;border-radius:8px;font-size:13px;">
+                    <div id="autoRegisterStatusText" style="color:#374151;margin-bottom:6px;"></div>
+                    <div id="autoRegisterLog" style="max-height:150px;overflow-y:auto;font-family:monospace;font-size:12px;color:#6b7280;white-space:pre-wrap;"></div>
                 </div>
-                <div id="autoRegisterStatus" style="display:none; margin-top: 12px; padding: 12px; background: #f3f4f6; border-radius: 8px; font-size: 13px;">
-                    <div id="autoRegisterStatusText" style="color: #374151;"></div>
-                    <div id="autoRegisterLog" style="margin-top: 8px; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 12px; color: #6b7280; white-space: pre-wrap;"></div>
-                </div>
-                <div style="margin-top: 16px; padding: 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px;">
-                    <div style="font-weight: 600; color: #374151; margin-bottom: 8px;"><i class="fas fa-clock"></i> 定时维护任务</div>
-                    <div style="font-size: 13px; color: #6b7280; margin-bottom: 8px;">每10分钟自动检查：删除异常账号、补充新账号，保持池中50个账号。</div>
-                    <div style="display: flex; gap: 8px;">
-                        <button id="btnStartMaintenance" class="btn btn-secondary" style="font-size: 13px;"><i class="fas fa-play"></i> 启动定时任务</button>
-                        <button id="btnStopMaintenance" class="btn btn-secondary" style="font-size: 13px;"><i class="fas fa-stop"></i> 停止定时任务</button>
-                        <button id="btnRunMaintenance" class="btn btn-secondary" style="font-size: 13px;"><i class="fas fa-bolt"></i> 立即执行</button>
+                <div style="margin-bottom:16px;padding:12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">
+                    <div style="font-weight:600;color:#166534;margin-bottom:8px;font-size:13px;"><i class="fas fa-heartbeat"></i> 账号健康检测（每分钟自动运行，不可用账号直接删除）</div>
+                    <div style="display:flex;gap:8px;margin-bottom:10px;">
+                        <div style="flex:1;"><label style="font-size:12px;color:#374151;display:block;margin-bottom:4px;">检测间隔(ms)</label>
+                        <input type="number" id="checkIntervalMs" min="10000" value="60000" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
+                        <div style="flex:1;"><label style="font-size:12px;color:#374151;display:block;margin-bottom:4px;">检测并发数</label>
+                        <input type="number" id="checkWorkers" min="1" max="20" value="5" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
                     </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button id="btnStartHealthCheck" class="btn btn-secondary" style="font-size:12px;padding:6px 10px;"><i class="fas fa-play"></i> 启动</button>
+                        <button id="btnStopHealthCheck" class="btn btn-secondary" style="font-size:12px;padding:6px 10px;"><i class="fas fa-stop"></i> 停止</button>
+                        <button id="btnRunHealthCheck" class="btn btn-secondary" style="font-size:12px;padding:6px 10px;"><i class="fas fa-bolt"></i> 立即检测</button>
+                        <button id="btnSaveHealthCheckConfig" class="btn btn-secondary" style="font-size:12px;padding:6px 10px;"><i class="fas fa-save"></i> 保存配置</button>
+                    </div>
+                    <div id="healthCheckStatusText" style="margin-top:8px;font-size:12px;color:#374151;"></div>
+                </div>
+                <div style="padding:12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;">
+                    <div style="font-weight:600;color:#374151;margin-bottom:8px;font-size:13px;"><i class="fas fa-clock"></i> 定时维护任务</div>
+                    <div style="display:flex;gap:8px;margin-bottom:10px;">
+                        <div style="flex:1;"><label style="font-size:12px;color:#374151;display:block;margin-bottom:4px;">维护间隔(ms)</label>
+                        <input type="number" id="maintenanceIntervalMs" min="60000" value="600000" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
+                        <div style="flex:1;"><label style="font-size:12px;color:#374151;display:block;margin-bottom:4px;">每次注册数量</label>
+                        <input type="number" id="maintenanceRegCount" min="1" max="50" value="3" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
+                        <div style="flex:1;"><label style="font-size:12px;color:#374151;display:block;margin-bottom:4px;">注册并发数</label>
+                        <input type="number" id="maintenanceRegWorkers" min="1" max="20" value="3" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
+                        <div style="flex:1;"><label style="font-size:12px;color:#374151;display:block;margin-bottom:4px;">目标池大小</label>
+                        <input type="number" id="maintenanceTargetPoolSize" min="1" max="500" value="50" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button id="btnStartMaintenance" class="btn btn-secondary" style="font-size:12px;padding:6px 10px;"><i class="fas fa-play"></i> 启动</button>
+                        <button id="btnStopMaintenance" class="btn btn-secondary" style="font-size:12px;padding:6px 10px;"><i class="fas fa-stop"></i> 停止</button>
+                        <button id="btnRunMaintenance" class="btn btn-secondary" style="font-size:12px;padding:6px 10px;"><i class="fas fa-bolt"></i> 立即执行</button>
+                        <button id="btnSaveMaintenanceConfig" class="btn btn-secondary" style="font-size:12px;padding:6px 10px;"><i class="fas fa-save"></i> 保存配置</button>
+                    </div>
+                    <div id="maintenanceStatusText" style="margin-top:8px;font-size:12px;color:#374151;"></div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -1099,9 +1118,31 @@ function showCodexAutoRegisterModal() {
 
     const closeBtn = modal.querySelector('.modal-close');
     const cancelBtn = modal.querySelector('.modal-cancel');
-    [closeBtn, cancelBtn].forEach(btn => btn.addEventListener('click', () => modal.remove()));
+    [closeBtn, cancelBtn].forEach(btn => btn.addEventListener('click', () => { if (pollTimer) clearInterval(pollTimer); modal.remove(); }));
 
-    // 轮询注册状态
+    // 加载当前状态
+    (async () => {
+        try {
+            const _token = localStorage.getItem('authToken');
+            const resp = await fetch('/api/codex/register-status', { headers: { 'Authorization': _token ? `Bearer ${_token}` : '' } });
+            const data = await resp.json();
+            if (!data.success) return;
+            const m = data.maintenance || {};
+            const hc = data.healthCheck || {};
+            if (m.interval) modal.querySelector('#maintenanceIntervalMs').value = m.interval;
+            if (m.registerCount) modal.querySelector('#maintenanceRegCount').value = m.registerCount;
+            if (m.registerWorkers) modal.querySelector('#maintenanceRegWorkers').value = m.registerWorkers;
+            if (m.targetPoolSize) modal.querySelector('#maintenanceTargetPoolSize').value = m.targetPoolSize;
+            if (hc.interval) modal.querySelector('#checkIntervalMs').value = hc.interval;
+            if (hc.workers) modal.querySelector('#checkWorkers').value = hc.workers;
+            modal.querySelector('#maintenanceStatusText').textContent = m.running ? '✅ 定时维护运行中' : '⏸ 定时维护未运行';
+            const lr = hc.lastResult;
+            modal.querySelector('#healthCheckStatusText').textContent = hc.timerActive
+                ? ('✅ 检测运行中 | 上次: ' + (lr ? ('检测' + lr.checked + '个，删除' + lr.removed + '个') : '无记录'))
+                : '⏸ 检测未运行';
+        } catch (e) { /* ignore */ }
+    })();
+
     let pollTimer = null;
     const statusDiv = modal.querySelector('#autoRegisterStatus');
     const statusText = modal.querySelector('#autoRegisterStatusText');
@@ -1117,16 +1158,9 @@ function showCodexAutoRegisterModal() {
                 if (!data.success) return;
                 const task = data.task;
                 statusDiv.style.display = 'block';
-                statusText.textContent = task.running ? '🔄 注册任务进行中...' : (task.result ? `✅ 完成：成功 ${task.result.registered || 0} 个，失败 ${task.result.failed || 0} 个` : '待机');
-                if (task.log && task.log.length > 0) {
-                    logDiv.textContent = task.log.join('\n');
-                    logDiv.scrollTop = logDiv.scrollHeight;
-                }
-                if (!task.running && pollTimer) {
-                    clearInterval(pollTimer);
-                    pollTimer = null;
-                    modal.querySelector('#btnStartAutoRegister').disabled = false;
-                }
+                statusText.textContent = task.running ? '🔄 注册任务进行中...' : (task.result ? ('✅ 完成：成功 ' + (task.result.registered || 0) + ' 个，失败 ' + (task.result.failed || 0) + ' 个') : '待机');
+                if (task.log && task.log.length > 0) { logDiv.textContent = task.log.join('\n'); logDiv.scrollTop = logDiv.scrollHeight; }
+                if (!task.running && pollTimer) { clearInterval(pollTimer); pollTimer = null; modal.querySelector('#btnStartAutoRegister').disabled = false; }
             } catch (e) { /* ignore */ }
         }, 2000);
     }
@@ -1142,47 +1176,65 @@ function showCodexAutoRegisterModal() {
             const token = localStorage.getItem('authToken');
             const resp = await fetch('/api/codex/auto-register', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+                headers: { 'Content-Type': 'application/json', 'Authorization': token ? ('Bearer ' + token) : '' },
                 body: JSON.stringify({ count, workers })
             });
             const data = await resp.json();
-            if (data.success) {
-                statusText.textContent = '🔄 注册任务已启动...';
-                startPolling();
-            } else {
-                statusText.textContent = `❌ 启动失败: ${data.error}`;
-                modal.querySelector('#btnStartAutoRegister').disabled = false;
-            }
-        } catch (e) {
-            statusText.textContent = `❌ 请求失败: ${e.message}`;
-            modal.querySelector('#btnStartAutoRegister').disabled = false;
-        }
+            if (data.success) { statusText.textContent = '🔄 注册任务已启动...'; startPolling(); }
+            else { statusText.textContent = '❌ 启动失败: ' + data.error; modal.querySelector('#btnStartAutoRegister').disabled = false; }
+        } catch (e) { statusText.textContent = '❌ 请求失败: ' + e.message; modal.querySelector('#btnStartAutoRegister').disabled = false; }
     });
 
-    // 定时维护控制
-    async function maintenanceAction(action) {
+    async function healthCheckAction(action, extra) {
+        extra = extra || {};
         try {
             const _token = localStorage.getItem('authToken');
-            const resp = await fetch('/api/codex/maintenance', {
+            const body = Object.assign({ action: action }, extra);
+            const resp = await fetch('/api/codex/health-check', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': _token ? `Bearer ${_token}` : '' },
-                body: JSON.stringify({ action })
+                headers: { 'Content-Type': 'application/json', 'Authorization': _token ? ('Bearer ' + _token) : '' },
+                body: JSON.stringify(body)
             });
             const data = await resp.json();
-            alert(data.message || data.error);
-        } catch (e) { alert('请求失败: ' + e.message); }
+            modal.querySelector('#healthCheckStatusText').textContent = data.success ? ('✅ ' + data.message) : ('❌ ' + data.error);
+        } catch (e) { modal.querySelector('#healthCheckStatusText').textContent = '❌ 请求失败: ' + e.message; }
+    }
+
+    modal.querySelector('#btnStartHealthCheck').addEventListener('click', () => healthCheckAction('start'));
+    modal.querySelector('#btnStopHealthCheck').addEventListener('click', () => healthCheckAction('stop'));
+    modal.querySelector('#btnRunHealthCheck').addEventListener('click', () => healthCheckAction('run'));
+    modal.querySelector('#btnSaveHealthCheckConfig').addEventListener('click', () => healthCheckAction('update-config', {
+        interval_ms: parseInt(modal.querySelector('#checkIntervalMs').value),
+        workers: parseInt(modal.querySelector('#checkWorkers').value)
+    }));
+
+    async function maintenanceAction(action, extra) {
+        extra = extra || {};
+        try {
+            const _token = localStorage.getItem('authToken');
+            const body = Object.assign({ action: action }, extra);
+            const resp = await fetch('/api/codex/maintenance', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': _token ? ('Bearer ' + _token) : '' },
+                body: JSON.stringify(body)
+            });
+            const data = await resp.json();
+            modal.querySelector('#maintenanceStatusText').textContent = data.success ? ('✅ ' + data.message) : ('❌ ' + data.error);
+        } catch (e) { modal.querySelector('#maintenanceStatusText').textContent = '❌ 请求失败: ' + e.message; }
     }
 
     modal.querySelector('#btnStartMaintenance').addEventListener('click', () => maintenanceAction('start'));
     modal.querySelector('#btnStopMaintenance').addEventListener('click', () => maintenanceAction('stop'));
     modal.querySelector('#btnRunMaintenance').addEventListener('click', () => maintenanceAction('run'));
+    modal.querySelector('#btnSaveMaintenanceConfig').addEventListener('click', () => maintenanceAction('update-config', {
+        interval_ms: parseInt(modal.querySelector('#maintenanceIntervalMs').value),
+        count: parseInt(modal.querySelector('#maintenanceRegCount').value),
+        workers: parseInt(modal.querySelector('#maintenanceRegWorkers').value),
+        target_pool_size: parseInt(modal.querySelector('#maintenanceTargetPoolSize').value)
+    }));
 
-    // 关闭时清理轮询
     modal.addEventListener('click', (e) => {
-        if (e.target === modal) {
-            if (pollTimer) clearInterval(pollTimer);
-            modal.remove();
-        }
+        if (e.target === modal) { if (pollTimer) clearInterval(pollTimer); modal.remove(); }
     });
 }
 

@@ -1,5 +1,5 @@
 {
-  "REQUIRED_API_KEY": "xmM02eMDOQpbIXAw7lM6QmNQjNej11PC3GoVzprMwqZ4pgcFQe-ihjFvYIYQ",
+  "REQUIRED_API_KEY": "123456",
   "SERVER_PORT": 3566,
   "HOST": "0.0.0.0",
   "MODEL_PROVIDER": "gemini-cli-oauth",
@@ -52,6 +52,9 @@
   "CUSTOM_MODELS": {
     "openai-codex-oauth": [
       "GPT-5.4"
+    ],
+    "claude-kiro-oauth": [
+      "claude-sonnet-4.5"
     ]
   }
 }

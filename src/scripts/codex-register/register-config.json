@@ -1,18 +1,13 @@
 {
   "_comment": "ChatGPT 批量自动注册工具配置文件",
-
   "total_accounts": 10,
   "mail_provider": "tempmail",
-
   "duckmail_api_base": "https://api.duckmail.sbs",
   "duckmail_bearer": "",
-  
   "tempmail_admin_auth": "12345678",
   "tempmail_api_base": "https://raspy-mountain-ca80.kingocheong2023.workers.dev",
   "tempmail_domain": "ktmail.us.ci",
-
   "proxy": "http://127.0.0.1:7890",
-
   "output_file": "registered_accounts.txt",
   "enable_oauth": true,
   "oauth_required": false,
@@ -22,7 +17,13 @@
   "ak_file": "ak.txt",
   "rk_file": "rk.txt",
   "token_json_dir": "codex_tokens",
-
   "upload_api_url": "http://8.148.64.84:3566/api/codex/upload-token",
-  "upload_api_token": "7d43e06d8a4fa02de8134e29c523a8353ea2e58f8db1c308cc58ff8e4c213393"
+  "upload_api_token": "7d43e06d8a4fa02de8134e29c523a8353ea2e58f8db1c308cc58ff8e4c213393",
+  "_comment_schedule": "以下为定时任务配置",
+  "check_interval_ms": 60000,
+  "check_workers": 5,
+  "maintenance_interval_ms": 300000,
+  "register_count": 3,
+  "register_workers": 3,
+  "target_pool_size": 50
 }
