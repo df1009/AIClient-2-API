@@ -383,7 +383,22 @@ async function importNewTokensToPool() {
 
     logger.info(`[CodexRegister] 检测到 ${credentials.length} 个 OAuth 成功账号，开始导入供应商池...`);
     const { batchImportCodexCredentialsStream } = await import('../../auth/oauth-handlers.js');
-    await batchImportCodexCredentialsStream(credentials, null, true); // skipDuplicateCheck=true，已用 email 去重
+    const importResult = await batchImportCodexCredentialsStream(credentials, null, true); // skipDuplicateCheck=true，已用 email 去重
+
+    // 导入成功后，删除同邮箱的原始文件（email.json），仅保留正式关联文件（timestamp_codex-email.json）
+    try {
+        for (const detail of importResult?.details || []) {
+            if (!detail?.success || !detail?.email) continue;
+            const rawFilePath = path.join(tokenDir, `${detail.email}.json`);
+            const linkedFilePath = detail.path ? path.resolve(path.join(path.resolve(SCRIPT_DIR, '../../..'), detail.path)) : null;
+            if (fs.existsSync(rawFilePath) && (!linkedFilePath || path.resolve(rawFilePath) !== path.resolve(linkedFilePath))) {
+                fs.unlinkSync(rawFilePath);
+                logger.info(`[CodexRegister] 已删除原始凭据文件: ${path.basename(rawFilePath)}`);
+            }
+        }
+    } catch (e) {
+        logger.warn(`[CodexRegister] 删除原始凭据文件失败: ${e.message}`);
+    }
 
     // 导入完成后，从文件重新加载 providerPools 到 poolManager，确保内存与文件一致
     try {
