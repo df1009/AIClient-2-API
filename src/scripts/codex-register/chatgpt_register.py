@@ -1867,12 +1867,20 @@ def _register_one(idx, total, proxy, output_file):
                 reg._print(f"[OAuth] {msg}（按配置继续）")
 
         # 4. 线程安全写入结果
+        oauth_status = 'ok' if oauth_ok else 'fail'
         with _file_lock:
             with open(output_file, "a", encoding="utf-8") as out:
-                out.write(f"{email}----{chatgpt_password}----{email_pwd}----oauth={'ok' if oauth_ok else 'fail'}\n")
+                out.write(f"{email}----{chatgpt_password}----{email_pwd}----oauth={oauth_status}\n")
 
         with _print_lock:
-            print(f"\n[OK] [{tag}] {email} 注册成功!")
+            print(f"\n[OK] [{tag}] {email} 账号创建成功")
+            if ENABLE_OAUTH:
+                if oauth_ok:
+                    print(f"[OK] [{tag}] {email} OAuth 成功，可导入供应商池")
+                else:
+                    print(f"[WARN] [{tag}] {email} OAuth 失败，仅账号创建成功，不可导入供应商池")
+            else:
+                print(f"[INFO] [{tag}] {email} 未启用 OAuth，当前不会生成可导池 Token")
         return True, email, None
 
     except Exception as e:

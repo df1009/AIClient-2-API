@@ -125,7 +125,9 @@ export async function runRegisterScript(count, workers = 3) {
 
         const proc = spawn(actualPython, args, { cwd: SCRIPT_DIR, env, stdio: ['pipe', 'pipe', 'pipe'] });
 
-        let successCount = 0;
+        let accountCreatedCount = 0;
+        let oauthSuccessCount = 0;
+        let oauthFailCount = 0;
         let failCount = 0;
 
         proc.stdout.on('data', (data) => {
@@ -133,7 +135,9 @@ export async function runRegisterScript(count, workers = 3) {
             lines.forEach(line => {
                 registerTaskLog.push(`[${new Date().toLocaleTimeString()}] ${line}`);
                 logger.info(`[CodexRegister] ${line}`);
-                if (line.includes('[OK]') || line.includes('注册成功')) successCount++;
+                if (line.includes('账号创建成功')) accountCreatedCount++;
+                if (line.includes('OAuth 成功，可导入供应商池')) oauthSuccessCount++;
+                if (line.includes('OAuth 失败，仅账号创建成功，不可导入供应商池')) oauthFailCount++;
                 if (line.includes('[FAIL]') || line.includes('注册失败')) failCount++;
             });
         });
@@ -147,12 +151,21 @@ export async function runRegisterScript(count, workers = 3) {
 
         proc.on('close', async (code) => {
             registerTaskRunning = false;
-            registerTaskResult = { success: code === 0, registered: successCount, failed: failCount, exitCode: code };
-            registerTaskLog.push(`[${new Date().toLocaleTimeString()}] 任务完成，成功: ${successCount}，失败: ${failCount}`);
-            logger.info(`[CodexRegister] 任务完成，成功: ${successCount}，失败: ${failCount}`);
+            registerTaskResult = {
+                success: code === 0,
+                accountCreated: accountCreatedCount,
+                oauthSuccess: oauthSuccessCount,
+                oauthFail: oauthFailCount,
+                failed: failCount,
+                exitCode: code,
+            };
+            registerTaskLog.push(`[${new Date().toLocaleTimeString()}] 任务完成，账号创建成功: ${accountCreatedCount}，OAuth成功: ${oauthSuccessCount}，OAuth失败: ${oauthFailCount}，注册失败: ${failCount}`);
+            logger.info(`[CodexRegister] 任务完成，账号创建成功: ${accountCreatedCount}，OAuth成功: ${oauthSuccessCount}，OAuth失败: ${oauthFailCount}，注册失败: ${failCount}`);
 
-            if (successCount > 0) {
+            if (oauthSuccessCount > 0) {
                 try { await importNewTokensToPool(); } catch (e) { logger.error('[CodexRegister] 自动导入失败:', e.message); }
+            } else if (accountCreatedCount > 0) {
+                logger.warn('[CodexRegister] 本次仅账号创建成功，但没有 OAuth 成功账号，跳过导入供应商池');
             }
             resolve(registerTaskResult);
         });
@@ -363,9 +376,12 @@ async function importNewTokensToPool() {
         } catch (e) { /* skip */ }
     }
 
-    if (credentials.length === 0) return;
+    if (credentials.length === 0) {
+        logger.warn('[CodexRegister] 未发现可导入的 OAuth 成功账号（configs/codex 下无新增有效 token 文件）');
+        return;
+    }
 
-    logger.info(`[CodexRegister] 导入 ${credentials.length} 个新账号到池...`);
+    logger.info(`[CodexRegister] 检测到 ${credentials.length} 个 OAuth 成功账号，开始导入供应商池...`);
     const { batchImportCodexCredentialsStream } = await import('../../auth/oauth-handlers.js');
     await batchImportCodexCredentialsStream(credentials, null, true); // skipDuplicateCheck=true，已用 email 去重
 
