@@ -1863,7 +1863,10 @@ def _register_one(idx, total, proxy, output_file):
     """单个注册任务 (在线程中运行) - 使用 DuckMail 临时邮箱"""
     reg = None
     try:
-        selected_proxy = _pick_proxy_for_account(idx) if proxy is None else proxy
+        if _get_proxy_pool_enabled():
+            selected_proxy = _pick_proxy_for_account(idx)
+        else:
+            selected_proxy = proxy if proxy is not None else DEFAULT_PROXY or None
         reg = ChatGPTRegister(proxy=selected_proxy, tag=f"{idx}")
 
         # 1. 创建 DuckMail 临时邮箱
