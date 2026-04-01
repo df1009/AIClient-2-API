@@ -1062,9 +1062,9 @@ function showCodexAutoRegisterModal() {
                 </div>
                 <div style="display:flex;gap:12px;margin-bottom:16px;">
                     <div style="flex:1;"><label style="display:block;margin-bottom:6px;font-weight:600;color:#374151;font-size:13px;">注册数量</label>
-                    <input type="number" id="autoRegisterCount" min="1" max="50" value="5" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;"></div>
+                    <input type="number" id="autoRegisterCount" value="5" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;"></div>
                     <div style="flex:1;"><label style="display:block;margin-bottom:6px;font-weight:600;color:#374151;font-size:13px;">并发数</label>
-                    <input type="number" id="autoRegisterWorkers" min="1" max="10" value="3" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;"></div>
+                    <input type="number" id="autoRegisterWorkers" value="3" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;"></div>
                 </div>
                 <div id="autoRegisterStatus" style="display:none;margin-bottom:16px;padding:12px;background:#f3f4f6;border-radius:8px;font-size:13px;">
                     <div id="autoRegisterStatusText" style="color:#374151;margin-bottom:6px;"></div>
@@ -1074,9 +1074,9 @@ function showCodexAutoRegisterModal() {
                     <div style="font-weight:600;color:#166534;margin-bottom:8px;font-size:13px;"><i class="fas fa-heartbeat"></i> 账号健康检测（每分钟自动运行，不可用账号直接删除）</div>
                     <div style="display:flex;gap:8px;margin-bottom:10px;">
                         <div style="flex:1;"><label style="font-size:12px;color:#374151;display:block;margin-bottom:4px;">检测间隔(ms)</label>
-                        <input type="number" id="checkIntervalMs" min="10000" value="60000" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
+                        <input type="number" id="checkIntervalMs" value="60000" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
                         <div style="flex:1;"><label style="font-size:12px;color:#374151;display:block;margin-bottom:4px;">检测并发数</label>
-                        <input type="number" id="checkWorkers" min="1" max="20" value="5" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
+                        <input type="number" id="checkWorkers" value="5" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
                         <button id="btnStartHealthCheck" class="btn btn-secondary" style="font-size:12px;padding:6px 10px;"><i class="fas fa-play"></i> 启动</button>
@@ -1090,13 +1090,13 @@ function showCodexAutoRegisterModal() {
                     <div style="font-weight:600;color:#374151;margin-bottom:8px;font-size:13px;"><i class="fas fa-clock"></i> 定时维护任务</div>
                     <div style="display:flex;gap:8px;margin-bottom:10px;">
                         <div style="flex:1;"><label style="font-size:12px;color:#374151;display:block;margin-bottom:4px;">维护间隔(ms)</label>
-                        <input type="number" id="maintenanceIntervalMs" min="60000" value="600000" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
+                        <input type="number" id="maintenanceIntervalMs" value="600000" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
                         <div style="flex:1;"><label style="font-size:12px;color:#374151;display:block;margin-bottom:4px;">每次注册数量</label>
-                        <input type="number" id="maintenanceRegCount" min="1" max="50" value="3" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
+                        <input type="number" id="maintenanceRegCount" value="3" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
                         <div style="flex:1;"><label style="font-size:12px;color:#374151;display:block;margin-bottom:4px;">注册并发数</label>
-                        <input type="number" id="maintenanceRegWorkers" min="1" max="20" value="3" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
+                        <input type="number" id="maintenanceRegWorkers" value="3" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
                         <div style="flex:1;"><label style="font-size:12px;color:#374151;display:block;margin-bottom:4px;">目标池大小</label>
-                        <input type="number" id="maintenanceTargetPoolSize" min="1" max="500" value="50" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
+                        <input type="number" id="maintenanceTargetPoolSize" value="50" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></div>
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
                         <button id="btnStartMaintenance" class="btn btn-secondary" style="font-size:12px;padding:6px 10px;"><i class="fas fa-play"></i> 启动</button>
@@ -1158,7 +1158,7 @@ function showCodexAutoRegisterModal() {
                 if (!data.success) return;
                 const task = data.task;
                 statusDiv.style.display = 'block';
-                statusText.textContent = task.running ? '🔄 注册任务进行中...' : (task.result ? ('✅ 完成：成功 ' + (task.result.registered || 0) + ' 个，失败 ' + (task.result.failed || 0) + ' 个') : '待机');
+                statusText.textContent = task.running ? '🔄 注册任务进行中...' : (task.result ? ('✅ 完成：账号创建成功 ' + (task.result.accountCreated || 0) + ' 个，OAuth成功 ' + (task.result.oauthSuccess || 0) + ' 个，OAuth失败 ' + (task.result.oauthFail || 0) + ' 个，注册失败 ' + (task.result.failed || 0) + ' 个') : '待机');
                 if (task.log && task.log.length > 0) { logDiv.textContent = task.log.join('\n'); logDiv.scrollTop = logDiv.scrollHeight; }
                 if (!task.running && pollTimer) { clearInterval(pollTimer); pollTimer = null; modal.querySelector('#btnStartAutoRegister').disabled = false; }
             } catch (e) { /* ignore */ }

@@ -1138,12 +1138,6 @@ export async function handleCodexAutoRegister(req, res) {
         const body = await getRequestBody(req);
         const { count = 1, workers = 3 } = body;
 
-        if (!Number.isInteger(count) || count < 1 || count > 50) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: false, error: '注册数量需在 1-50 之间' }));
-            return true;
-        }
-
         const { runRegisterScript } = await import('../scripts/codex-register/register-service.js');
         runRegisterScript(count, workers).catch(e => logger.error('[CodexRegister] 注册任务出错:', String(e)));
 
@@ -1187,24 +1181,33 @@ export async function handleCodexMaintenanceControl(req, res) {
     try {
         const body = await getRequestBody(req);
         const { action, interval_ms, count, workers, target_pool_size } = body;
-        const { startMaintenanceScheduler, stopMaintenanceScheduler, runMaintenanceTask, getRegisterConfig, saveRegisterConfig } = await import('../scripts/codex-register/register-service.js');
+        const { startMaintenanceScheduler, stopMaintenanceScheduler, runMaintenanceTask, getRegisterConfig, saveRegisterConfig, getMaintenanceSchedulerStatus } = await import('../scripts/codex-register/register-service.js');
 
         // 如果传了配置参数，先更新 config
+        let maintenanceConfigUpdated = false;
         if (interval_ms !== undefined || count !== undefined || workers !== undefined || target_pool_size !== undefined) {
             const config = getRegisterConfig();
-            if (interval_ms !== undefined && Number.isInteger(interval_ms) && interval_ms >= 60000) {
+            if (interval_ms !== undefined && Number.isInteger(interval_ms)) {
                 config.maintenance_interval_ms = interval_ms;
+                maintenanceConfigUpdated = true;
             }
-            if (count !== undefined && Number.isInteger(count) && count >= 1 && count <= 50) {
+            if (count !== undefined && Number.isInteger(count)) {
                 config.register_count = count;
+                maintenanceConfigUpdated = true;
             }
-            if (workers !== undefined && Number.isInteger(workers) && workers >= 1 && workers <= 20) {
+            if (workers !== undefined && Number.isInteger(workers)) {
                 config.register_workers = workers;
+                maintenanceConfigUpdated = true;
             }
-            if (target_pool_size !== undefined && Number.isInteger(target_pool_size) && target_pool_size >= 1 && target_pool_size <= 500) {
+            if (target_pool_size !== undefined && Number.isInteger(target_pool_size)) {
                 config.target_pool_size = target_pool_size;
+                maintenanceConfigUpdated = true;
             }
             saveRegisterConfig(config);
+
+            if (maintenanceConfigUpdated && getMaintenanceSchedulerStatus().running) {
+                startMaintenanceScheduler();
+            }
         }
 
         if (action === 'start') {
@@ -1241,18 +1244,25 @@ export async function handleCodexHealthCheckControl(req, res) {
     try {
         const body = await getRequestBody(req);
         const { action, interval_ms, workers } = body;
-        const { startHealthCheckScheduler, stopHealthCheckScheduler, runAccountHealthCheck, getRegisterConfig, saveRegisterConfig } = await import('../scripts/codex-register/register-service.js');
+        const { startHealthCheckScheduler, stopHealthCheckScheduler, runAccountHealthCheck, getRegisterConfig, saveRegisterConfig, getHealthCheckStatus } = await import('../scripts/codex-register/register-service.js');
 
         // 动态更新检测配置
+        let healthCheckConfigUpdated = false;
         if (interval_ms !== undefined || workers !== undefined) {
             const config = getRegisterConfig();
-            if (interval_ms !== undefined && Number.isInteger(interval_ms) && interval_ms >= 10000) {
+            if (interval_ms !== undefined && Number.isInteger(interval_ms)) {
                 config.check_interval_ms = interval_ms;
+                healthCheckConfigUpdated = true;
             }
-            if (workers !== undefined && Number.isInteger(workers) && workers >= 1 && workers <= 20) {
+            if (workers !== undefined && Number.isInteger(workers)) {
                 config.check_workers = workers;
+                healthCheckConfigUpdated = true;
             }
             saveRegisterConfig(config);
+
+            if (healthCheckConfigUpdated && getHealthCheckStatus().timerActive) {
+                startHealthCheckScheduler();
+            }
         }
 
         if (action === 'start') {
