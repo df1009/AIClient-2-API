@@ -76,33 +76,6 @@ export function getRegisterTaskStatus() {
     };
 }
 
-function readRecentRegisterResults(expectedCount = 0) {
-    const outputFile = path.join(SCRIPT_DIR, 'registered_accounts.txt');
-    if (!fs.existsSync(outputFile)) {
-        return { okEmails: [], failEmails: [], rawLines: [] };
-    }
-
-    const lines = fs.readFileSync(outputFile, 'utf8')
-        .split('\n')
-        .map(line => line.trim())
-        .filter(Boolean);
-
-    const recentLines = expectedCount > 0 ? lines.slice(-expectedCount) : lines;
-    const okEmails = [];
-    const failEmails = [];
-
-    for (const line of recentLines) {
-        const parts = line.split('----');
-        const email = parts[0]?.trim();
-        const oauthField = parts[3]?.trim() || '';
-        if (!email) continue;
-        if (oauthField === 'oauth=ok') okEmails.push(email);
-        else if (oauthField === 'oauth=fail') failEmails.push(email);
-    }
-
-    return { okEmails, failEmails, rawLines: recentLines };
-}
-
 export async function runRegisterScript(count, workers = 3) {
     if (registerTaskRunning) {
         throw new Error('注册任务正在运行中，请等待完成');
@@ -178,21 +151,16 @@ export async function runRegisterScript(count, workers = 3) {
 
         proc.on('close', async (code) => {
             registerTaskRunning = false;
-            const recentResults = readRecentRegisterResults(accountCreatedCount);
             registerTaskResult = {
                 success: code === 0,
                 accountCreated: accountCreatedCount,
                 oauthSuccess: oauthSuccessCount,
                 oauthFail: oauthFailCount,
                 failed: failCount,
-                oauthOkEmails: recentResults.okEmails,
-                oauthFailEmails: recentResults.failEmails,
                 exitCode: code,
             };
             registerTaskLog.push(`[${new Date().toLocaleTimeString()}] 任务完成，账号创建成功: ${accountCreatedCount}，OAuth成功: ${oauthSuccessCount}，OAuth失败: ${oauthFailCount}，注册失败: ${failCount}`);
             logger.info(`[CodexRegister] 任务完成，账号创建成功: ${accountCreatedCount}，OAuth成功: ${oauthSuccessCount}，OAuth失败: ${oauthFailCount}，注册失败: ${failCount}`);
-            logger.info(`[CodexRegister] OAuth成功账号邮箱: ${recentResults.okEmails.length > 0 ? recentResults.okEmails.join(', ') : '无'}`);
-            logger.info(`[CodexRegister] OAuth失败账号邮箱: ${recentResults.failEmails.length > 0 ? recentResults.failEmails.join(', ') : '无'}`);
 
             if (oauthSuccessCount > 0) {
                 try { await importNewTokensToPool(); } catch (e) { logger.error('[CodexRegister] 自动导入失败:', e.message); }
