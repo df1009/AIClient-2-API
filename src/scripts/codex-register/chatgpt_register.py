@@ -107,6 +107,18 @@ RK_FILE = _CONFIG["rk_file"]
 TOKEN_JSON_DIR = _CONFIG["token_json_dir"]
 UPLOAD_API_URL = _CONFIG["upload_api_url"]
 UPLOAD_API_TOKEN = _CONFIG["upload_api_token"]
+PROXY_MODE = str(os.environ.get("PROXY_MODE", _CONFIG.get("proxy_mode", "single")) or "single").strip().lower()
+PROXY_STRATEGY = str(os.environ.get("PROXY_STRATEGY", _CONFIG.get("proxy_strategy", "round_robin")) or "round_robin").strip().lower()
+
+_raw_proxy_pool = os.environ.get("PROXY_POOL", "")
+if _raw_proxy_pool:
+    try:
+        PROXY_POOL = [item.strip() for item in json.loads(_raw_proxy_pool) if isinstance(item, str) and item.strip()]
+    except Exception:
+        PROXY_POOL = []
+else:
+    config_proxy_pool = _CONFIG.get("proxy_pool") or []
+    PROXY_POOL = [item.strip() for item in config_proxy_pool if isinstance(item, str) and item.strip()]
 
 if MAIL_PROVIDER == "tempmail":
     if not TEMPMAIL_ADMIN_AUTH:
@@ -121,6 +133,8 @@ elif not DUCKMAIL_BEARER:
 # 全局线程锁
 _print_lock = threading.Lock()
 _file_lock = threading.Lock()
+_proxy_lock = threading.Lock()
+_proxy_rr_index = 0
 
 
 # Chrome 指纹配置: impersonate 与 sec-ch-ua 必须匹配真实浏览器
@@ -494,6 +508,27 @@ def _generate_password(length=14):
     pwd += [random.choice(all_chars) for _ in range(length - 4)]
     random.shuffle(pwd)
     return "".join(pwd)
+
+
+def _get_proxy_pool_enabled():
+    return bool(PROXY_POOL) and PROXY_MODE in {"pool", "rotate"}
+
+
+
+def _pick_proxy_for_account(idx: int):
+    global _proxy_rr_index
+
+    if _get_proxy_pool_enabled():
+        strategy = PROXY_STRATEGY if PROXY_STRATEGY in {"round_robin", "random"} else "round_robin"
+        if strategy == "random":
+            return random.choice(PROXY_POOL)
+
+        with _proxy_lock:
+            proxy = PROXY_POOL[_proxy_rr_index % len(PROXY_POOL)]
+            _proxy_rr_index += 1
+            return proxy
+
+    return DEFAULT_PROXY or None
 
 
 # ================= DuckMail 邮箱函数 =================
@@ -1828,7 +1863,8 @@ def _register_one(idx, total, proxy, output_file):
     """单个注册任务 (在线程中运行) - 使用 DuckMail 临时邮箱"""
     reg = None
     try:
-        reg = ChatGPTRegister(proxy=proxy, tag=f"{idx}")
+        selected_proxy = _pick_proxy_for_account(idx) if proxy is None else proxy
+        reg = ChatGPTRegister(proxy=selected_proxy, tag=f"{idx}")
 
         # 1. 创建 DuckMail 临时邮箱
         reg._print("创建临时邮箱...")
@@ -1843,6 +1879,7 @@ def _register_one(idx, total, proxy, output_file):
         with _print_lock:
             print(f"\n{'='*60}")
             print(f"  [{idx}/{total}] 注册: {email}")
+            print(f"  代理: {selected_proxy or '直连'}")
             print(f"  ChatGPT密码: {chatgpt_password}")
             print(f"  邮箱密码: {email_pwd}")
             print(f"  姓名: {name} | 生日: {birthdate}")
@@ -1915,6 +1952,10 @@ def run_batch(total_accounts: int = 3, output_file="registered_accounts.txt",
         print(f"  temp-mail: {TEMPMAIL_API_BASE} | 域名: {TEMPMAIL_DOMAIN}")
     else:
         print(f"  DuckMail: {DUCKMAIL_API_BASE}")
+    if _get_proxy_pool_enabled():
+        print(f"  代理模式: 代理池 | 策略: {PROXY_STRATEGY} | 池大小: {len(PROXY_POOL)}")
+    else:
+        print(f"  代理模式: 单代理 | 代理: {proxy or '直连'}")
     print(f"  OAuth: {'开启' if ENABLE_OAUTH else '关闭'} | required: {'是' if OAUTH_REQUIRED else '否'}")
     if ENABLE_OAUTH:
         print(f"  OAuth Issuer: {OAUTH_ISSUER}")

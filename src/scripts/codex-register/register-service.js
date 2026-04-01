@@ -89,6 +89,10 @@ export async function runRegisterScript(count, workers = 3) {
     const tokenDir = path.join(process.cwd(), 'configs', 'codex');
     fs.mkdirSync(tokenDir, { recursive: true });
 
+    const proxyPool = Array.isArray(config.proxy_pool)
+        ? config.proxy_pool.filter(item => typeof item === 'string' && item.trim())
+        : [];
+
     const env = {
         ...process.env,
         TOTAL_ACCOUNTS: String(count),
@@ -101,6 +105,9 @@ export async function runRegisterScript(count, workers = 3) {
         HTTPS_PROXY: config.proxy || '',
         ALL_PROXY: config.proxy || '',
         PROXY: config.proxy || '',
+        PROXY_MODE: config.proxy_mode || '',
+        PROXY_STRATEGY: config.proxy_strategy || '',
+        PROXY_POOL: JSON.stringify(proxyPool),
         ENABLE_OAUTH: 'true',
         OAUTH_REQUIRED: 'false',
         TOKEN_JSON_DIR: tokenDir,
