@@ -18,10 +18,16 @@ function loadAutoProxyPoolFromMihomo(config) {
     const host = config.auto_proxy_pool_host || '127.0.0.1';
     const startPort = Number(config.auto_proxy_pool_start_port || 18001);
     const endPort = Number(config.auto_proxy_pool_end_port || 18032);
-    const configPath = path.join(process.env.HOME || '', '.config', 'mihomo-proxy-pool', 'config.yaml');
+    const configPathCandidates = [
+        config.auto_proxy_pool_config_path,
+        path.join(process.env.HOME || '', '.config', 'mihomo-proxy-pool', 'config.yaml'),
+        '/home/df/clash/proxy-pool-run/config.yaml',
+        '/home/df/.config/mihomo-proxy-pool/config.yaml',
+    ].filter(Boolean);
 
-    if (!fs.existsSync(configPath)) {
-        logger.warn(`[CodexRegister] Mihomo proxy pool config not found: ${configPath}`);
+    const configPath = configPathCandidates.find(candidate => fs.existsSync(candidate));
+    if (!configPath) {
+        logger.warn(`[CodexRegister] Mihomo proxy pool config not found, tried: ${configPathCandidates.join(', ')}`);
         return { proxyPool: [], proxyPoolNames: [] };
     }
 
@@ -85,7 +91,7 @@ function loadAutoProxyPoolFromMihomo(config) {
         proxyPoolNames.push(nodeName);
     }
 
-    logger.info(`[CodexRegister] Auto proxy pool loaded: ${proxyPool.length} node(s) from Mihomo`);
+    logger.info(`[CodexRegister] Auto proxy pool loaded: ${proxyPool.length} node(s) from Mihomo (${configPath})`);
     return { proxyPool, proxyPoolNames };
 }
 
