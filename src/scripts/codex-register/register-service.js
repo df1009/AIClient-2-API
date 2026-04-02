@@ -2,7 +2,7 @@
  * Codex 账号自动注册服务
  */
 
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -181,6 +181,39 @@ export function getRegisterTaskStatus() {
     };
 }
 
+function ensureCodexRegisterPython() {
+    const venv311Python = path.join(SCRIPT_DIR, 'venv311', 'bin', 'python3');
+    const venvPython = path.join(SCRIPT_DIR, 'venv', 'bin', 'python3');
+    const venv13Python = path.join(SCRIPT_DIR, 'venv13', 'bin', 'python3');
+    const preferredPython = fs.existsSync(venv311Python) ? venv311Python : (fs.existsSync(venv13Python) ? venv13Python : venvPython);
+
+    const requiredModules = ['curl_cffi', 'bs4', 'requests', 'yaml', 'dotenv'];
+    const canUsePreferred = preferredPython && fs.existsSync(preferredPython);
+    if (canUsePreferred) {
+        const check = spawnSync(preferredPython, ['-c', `import importlib.util; mods=${JSON.stringify(requiredModules)}; missing=[m for m in mods if importlib.util.find_spec(m) is None]; print(','.join(missing))`], {
+            cwd: SCRIPT_DIR,
+            encoding: 'utf8'
+        });
+        if (check.status === 0 && !String(check.stdout || '').trim()) {
+            return preferredPython;
+        }
+        logger.warn(`[CodexRegister] Existing venv is missing modules: ${String(check.stdout || check.stderr || '').trim()}`);
+    }
+
+    logger.warn('[CodexRegister] Python venv missing or incomplete, attempting self-heal...');
+    const setup = spawnSync('bash', ['-lc', "python3 -m venv venv311 && ./venv311/bin/pip install --upgrade pip >/tmp/codex-venv-pip.log 2>&1 && ./venv311/bin/pip install curl_cffi beautifulsoup4 requests pyyaml python-dotenv >/tmp/codex-venv-deps.log 2>&1"], {
+        cwd: SCRIPT_DIR,
+        encoding: 'utf8'
+    });
+    if (setup.status === 0 && fs.existsSync(venv311Python)) {
+        logger.info('[CodexRegister] Python venv self-heal succeeded, using venv311');
+        return venv311Python;
+    }
+
+    logger.error(`[CodexRegister] Python venv self-heal failed: ${String(setup.stderr || setup.stdout || '').trim()}`);
+    return 'python3';
+}
+
 export async function runRegisterScript(count, workers = 3) {
     if (registerTaskRunning) {
         throw new Error('注册任务正在运行中，请等待完成');
@@ -236,14 +269,7 @@ export async function runRegisterScript(count, workers = 3) {
     };
 
     return new Promise((resolve, reject) => {
-        const venv311Python = path.join(SCRIPT_DIR, 'venv311', 'bin', 'python3');
-        const venvPython = path.join(SCRIPT_DIR, 'venv', 'bin', 'python3');
-        const venv13Python = path.join(SCRIPT_DIR, 'venv13', 'bin', 'python3');
-        let actualPython = 'python3';
-        if (fs.existsSync(venv311Python)) actualPython = venv311Python;
-        else if (fs.existsSync(venv13Python)) actualPython = venv13Python;
-        else if (fs.existsSync(venvPython)) actualPython = venvPython;
-
+        const actualPython = ensureCodexRegisterPython();
         const args = [SCRIPT_PATH, '--batch', '--count', String(count), '--workers', String(workers)];
 
         logger.info(`[CodexRegister] 启动注册: ${actualPython} ${args.join(' ')}`);
