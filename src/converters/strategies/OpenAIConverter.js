@@ -15,7 +15,6 @@ import {
     extractThinkingFromOpenAIText,
     mapFinishReason,
     cleanJsonSchemaProperties as cleanJsonSchema,
-    CLAUDE_FORCE_MAX_TOKENS,
     CLAUDE_DEFAULT_MAX_TOKENS,
     CLAUDE_DEFAULT_TEMPERATURE,
     CLAUDE_DEFAULT_TOP_P,
@@ -156,7 +155,7 @@ export class OpenAIConverter extends BaseConverter {
                 }
                 content.push({
                     type: 'tool_result',
-                    tool_use_id: message.tool_call_id,
+                    tool_use_id: message.tool_call_id || message.tool_use_id,
                     content: toolContent
                 });
                 claudeMessages.push({ role: 'user', content: content });
@@ -214,6 +213,33 @@ export class OpenAIConverter extends BaseConverter {
                                     content.push({ type: 'text', text: `[Audio: ${audioUrl}]` });
                                 }
                                 break;
+                            case 'input_audio':
+                                // OpenAI 官方 input_audio 格式
+                                if (item.input_audio) {
+                                    // Claude 不直接支持音频输入，转换为文本描述
+                                    content.push({ type: 'text', text: `[Audio Input: ${item.input_audio.format || 'audio'}]` });
+                                }
+                                break;
+                            case 'tool_use':
+                                content.push({
+                                    type: 'tool_use',
+                                    id: item.id,
+                                    name: item.name,
+                                    input: typeof item.input === 'string' ? safeParseJSON(item.input) : (item.input || {})
+                                });
+                                break;
+                            case 'tool_result': {
+                                let resultContent = item.content;
+                                if (typeof resultContent === 'object' && resultContent !== null) {
+                                    resultContent = JSON.stringify(resultContent);
+                                }
+                                content.push({
+                                    type: 'tool_result',
+                                    tool_use_id: item.tool_use_id || item.id,
+                                    content: resultContent
+                                });
+                                break;
+                            }
                         }
                     });
                 }
@@ -261,10 +287,7 @@ export class OpenAIConverter extends BaseConverter {
         const claudeRequest = {
             model: openaiRequest.model,
             messages: mergedClaudeMessages,
-            // 如果设置了 CLAUDE_FORCE_MAX_TOKENS > 0，则强制使用该值；否则使用客户端传入的值或默认值
-            max_tokens: CLAUDE_FORCE_MAX_TOKENS > 0 
-                ? CLAUDE_FORCE_MAX_TOKENS 
-                : checkAndAssignOrDefault(openaiRequest.max_tokens, CLAUDE_DEFAULT_MAX_TOKENS),
+            max_tokens: checkAndAssignOrDefault(openaiRequest.max_tokens, CLAUDE_DEFAULT_MAX_TOKENS),
             temperature: checkAndAssignOrDefault(openaiRequest.temperature, CLAUDE_DEFAULT_TEMPERATURE),
             top_p: checkAndAssignOrDefault(openaiRequest.top_p, CLAUDE_DEFAULT_TOP_P),
         };
@@ -275,13 +298,50 @@ export class OpenAIConverter extends BaseConverter {
 
         if (openaiRequest.tools?.length) {
             claudeRequest.tools = openaiRequest.tools
-                .filter(t => t && t.function && t.function.name)
-                .map(t => ({
-                    name: t.function.name,
-                    description: t.function.description || '',
-                    input_schema: t.function.parameters || { type: 'object', properties: {} }
-                }));
-            claudeRequest.tool_choice = this.buildClaudeToolChoice(openaiRequest.tool_choice);
+                .filter(t => t && ((t.function && t.function.name) || t.name))
+                .map(t => {
+                    if (t.function) {
+                        return {
+                            name: t.function.name,
+                            description: t.function.description || '',
+                            input_schema: t.function.parameters || { type: 'object', properties: {} }
+                        };
+                    }
+                    return {
+                        name: t.name,
+                        description: t.description || '',
+                        input_schema: t.input_schema || { type: 'object', properties: {} }
+                    };
+                });
+            if (claudeRequest.tools.length > 0) {
+                claudeRequest.tool_choice = this.buildClaudeToolChoice(openaiRequest.tool_choice);
+            }
+        }
+
+        // Optional passthrough: request-side "thinking" controls for Claude/Kiro.
+        // OpenAI-compatible clients can provide these via `extra_body.anthropic.thinking`.
+        // We intentionally keep normalization minimal here; provider implementations
+        // (e.g. Kiro) clamp budgets and apply defaults.
+        const extThinking = openaiRequest?.extra_body?.anthropic?.thinking;
+        if (extThinking && typeof extThinking === 'object' && !Array.isArray(extThinking)) {
+            const type = String(extThinking.type || '').toLowerCase().trim();
+            if (type === 'enabled') {
+                const thinkingCfg = { type: 'enabled' };
+                if (extThinking.budget_tokens !== undefined) {
+                    const n = parseInt(extThinking.budget_tokens, 10);
+                    if (Number.isFinite(n)) {
+                        thinkingCfg.budget_tokens = n;
+                    }
+                }
+                claudeRequest.thinking = thinkingCfg;
+            } else if (type === 'adaptive') {
+                const effortRaw = typeof extThinking.effort === 'string' ? extThinking.effort : '';
+                const effort = effortRaw.toLowerCase().trim();
+                const normalizedEffort = (effort === 'low' || effort === 'medium' || effort === 'high') ? effort : 'high';
+                claudeRequest.thinking = { type: 'adaptive', effort: normalizedEffort };
+            } else if (type === 'disabled') {
+                // Explicitly disabled: omit thinking config.
+            }
         }
 
         return claudeRequest;

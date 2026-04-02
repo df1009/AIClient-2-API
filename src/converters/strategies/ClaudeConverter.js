@@ -310,6 +310,17 @@ export class ClaudeConverter extends BaseConverter {
             };
         }
 
+        // Extract thinking blocks into OpenAI-style `reasoning_content`.
+        let reasoningContent = '';
+        if (Array.isArray(claudeResponse.content)) {
+            for (const block of claudeResponse.content) {
+                if (!block || typeof block !== 'object') continue;
+                if (block.type === 'thinking') {
+                    reasoningContent += (block.thinking ?? block.text ?? '');
+                }
+            }
+        }
+
         // 检查是否包含 tool_use
         const hasToolUse = claudeResponse.content.some(block => block && block.type === 'tool_use');
         
@@ -347,6 +358,10 @@ export class ClaudeConverter extends BaseConverter {
         } else {
             // 处理普通文本响应
             message.content = this.processClaudeResponseContent(claudeResponse.content);
+        }
+
+        if (reasoningContent) {
+            message.reasoning_content = reasoningContent;
         }
 
         // 处理 finish_reason
@@ -661,7 +676,17 @@ export class ClaudeConverter extends BaseConverter {
      * 处理Claude内容到OpenAI格式
      */
     processClaudeContentToOpenAIContent(content) {
-        if (!content || !Array.isArray(content)) return [];
+        if (!content) return [];
+        
+        // 如果是字符串，直接转换为 OpenAI 的文本块格式
+        if (typeof content === 'string') {
+            return [{
+                type: 'text',
+                text: content
+            }];
+        }
+
+        if (!Array.isArray(content)) return [];
         
         const contentArray = [];
         
@@ -720,7 +745,11 @@ export class ClaudeConverter extends BaseConverter {
      * 处理Claude响应内容
      */
     processClaudeResponseContent(content) {
-        if (!content || !Array.isArray(content)) return '';
+        if (!content) return '';
+        
+        if (typeof content === 'string') return content;
+
+        if (!Array.isArray(content)) return '';
         
         const contentArray = [];
         
