@@ -251,7 +251,16 @@ export async function runRegisterScript(count, workers = 3) {
                 registerTaskLog.push(`[${new Date().toLocaleTimeString()}] ${line}`);
                 logger.info(`[CodexRegister] ${line}`);
                 if (line.includes('账号创建成功')) accountCreatedCount++;
-                if (line.includes('OAuth 成功，可导入供应商池')) oauthSuccessCount++;
+                if (line.includes('OAuth 成功，可导入供应商池')) {
+                    oauthSuccessCount++;
+                    const emailMatch = line.match(/\]\s+([^\s]+@[^\s]+)\s+OAuth 成功/);
+                    const successEmail = emailMatch?.[1];
+                    if (successEmail) {
+                        importTokensToPool({ onlyEmail: successEmail }).catch(e => {
+                            logger.error(`[CodexRegister] 实时导入失败(${successEmail}): ${e.message}`);
+                        });
+                    }
+                }
                 if (line.includes('OAuth 失败，仅账号创建成功，不可导入供应商池')) oauthFailCount++;
                 if (line.includes('[FAIL]') || line.includes('注册失败')) failCount++;
             });
@@ -450,7 +459,7 @@ export function stopHealthCheckScheduler() {
     }
 }
 
-async function importNewTokensToPool() {
+async function importTokensToPool({ onlyEmail = null } = {}) {
     const PROJECT_ROOT = path.resolve(SCRIPT_DIR, '../../..');
     const tokenDir = path.join(PROJECT_ROOT, 'configs', 'codex');
     if (!fs.existsSync(tokenDir)) return;
@@ -460,12 +469,10 @@ async function importNewTokensToPool() {
 
     const pool = poolManager.providerStatus['openai-codex-oauth'] || [];
     // 用 email 去重，避免路径格式不一致导致重复导入
-    // 注意：CODEX_OAUTH_CREDS_FILE_PATH 是相对于项目根目录的路径，需用 SCRIPT_DIR 向上推算
     const existingEmails = new Set(
         pool.map(p => {
             const filePath = p.config.CODEX_OAUTH_CREDS_FILE_PATH || '';
             try {
-                // 尝试相对于项目根目录解析
                 const absPath = path.isAbsolute(filePath)
                     ? filePath
                     : path.resolve(PROJECT_ROOT, filePath);
@@ -485,14 +492,19 @@ async function importNewTokensToPool() {
         const absPath = path.resolve(path.join(tokenDir, file));
         try {
             const cred = JSON.parse(fs.readFileSync(absPath, 'utf8'));
-            if (cred.type === 'codex' && cred.access_token && !existingEmails.has(cred.email)) {
-                credentials.push(cred);
-            }
+            if (cred.type !== 'codex' || !cred.access_token) continue;
+            if (onlyEmail && cred.email !== onlyEmail) continue;
+            if (existingEmails.has(cred.email)) continue;
+            credentials.push(cred);
         } catch (e) { /* skip */ }
     }
 
     if (credentials.length === 0) {
-        logger.warn('[CodexRegister] 未发现可导入的 OAuth 成功账号（configs/codex 下无新增有效 token 文件）');
+        if (onlyEmail) {
+            logger.info(`[CodexRegister] OAuth 成功账号 ${onlyEmail} 暂无可导入增量（可能已导入）`);
+        } else {
+            logger.warn('[CodexRegister] 未发现可导入的 OAuth 成功账号（configs/codex 下无新增有效 token 文件）');
+        }
         return;
     }
 
@@ -530,6 +542,10 @@ async function importNewTokensToPool() {
     }
 
     logger.info(`[CodexRegister] 导入完成`);
+}
+
+async function importNewTokensToPool() {
+    return importTokensToPool();
 }
 
 export function getCodexPoolStatus() {
@@ -620,17 +636,26 @@ export async function runMaintenanceTask() {
 
         const regCount = getRegisterCount();
         const regWorkers = getRegisterWorkers();
+        const targetPoolSize = getTargetPoolSize();
         if (status.unhealthy > 0) {
             const removed = await removeUnhealthyAccounts();
             const cur = getCodexPoolStatus();
-            const need = Math.min(removed, getTargetPoolSize() - cur.healthy);
-            if (need > 0) await runRegisterScript(Math.min(need, regCount), regWorkers);
+            const replaceNeed = Math.max(removed, 0);
+            const expandNeed = Math.max(targetPoolSize - cur.healthy, 0);
+            const totalNeed = replaceNeed + expandNeed;
+            const actualCount = Math.min(totalNeed, regCount);
+            logger.info(`[CodexRegister] 维护补量: 替补=${replaceNeed} 扩容=${expandNeed} 本轮实际注册=${actualCount}`);
+            if (actualCount > 0) {
+                await runRegisterScript(actualCount, regWorkers);
+            }
         } else {
-            logger.info(`[CodexRegister] 无异常账号，轮换：注册 ${regCount} 个新账号...`);
-            await runRegisterScript(regCount, regWorkers);
+            const need = Math.max(targetPoolSize - status.healthy, 0);
+            const actualCount = need > 0 ? Math.min(need, regCount) : regCount;
+            logger.info(`[CodexRegister] 无异常账号，轮换/扩容：目标缺口=${need}，本轮注册 ${actualCount} 个新账号...`);
+            await runRegisterScript(actualCount, regWorkers);
             const cur = getCodexPoolStatus();
-            if (cur.healthy > getTargetPoolSize()) {
-                await removeOldestAccounts(cur.healthy - getTargetPoolSize());
+            if (cur.healthy > targetPoolSize) {
+                await removeOldestAccounts(cur.healthy - targetPoolSize);
             }
         }
         logger.info('[CodexRegister] 维护任务完成');

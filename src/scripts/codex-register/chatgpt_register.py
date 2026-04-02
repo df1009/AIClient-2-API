@@ -145,6 +145,10 @@ elif not DUCKMAIL_BEARER:
 _print_lock = threading.Lock()
 _file_lock = threading.Lock()
 _proxy_lock = threading.Lock()
+_PROXY_STATE_FILE = os.environ.get(
+    "PROXY_STATE_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxy-rr-state.json")
+)
 _proxy_rr_index = 0
 
 
@@ -536,6 +540,27 @@ def _get_proxy_pool_enabled():
     return bool(PROXY_POOL) and PROXY_MODE in {"pool", "rotate"}
 
 
+def _load_proxy_rr_index():
+    global _proxy_rr_index
+    try:
+        if os.path.exists(_PROXY_STATE_FILE):
+            with open(_PROXY_STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            _proxy_rr_index = int(data.get("next_index", 0))
+    except Exception:
+        _proxy_rr_index = 0
+
+
+def _save_proxy_rr_index(next_index: int):
+    try:
+        with open(_PROXY_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"next_index": next_index}, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+_load_proxy_rr_index()
+
 
 def _pick_proxy_for_account(idx: int):
     global _proxy_rr_index
@@ -552,6 +577,7 @@ def _pick_proxy_for_account(idx: int):
             proxy_idx = _proxy_rr_index % len(PROXY_POOL)
             proxy = PROXY_POOL[proxy_idx]
             _proxy_rr_index += 1
+            _save_proxy_rr_index(_proxy_rr_index)
             proxy_name = PROXY_POOL_NAMES[proxy_idx] if proxy_idx < len(PROXY_POOL_NAMES) else proxy
             return proxy, proxy_name
 
