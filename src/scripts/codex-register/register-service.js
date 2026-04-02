@@ -9,6 +9,86 @@ import { fileURLToPath } from 'url';
 import logger from '../../utils/logger.js';
 import { getProviderPoolManager } from '../../services/service-manager.js';
 
+function loadAutoProxyPoolFromMihomo(config) {
+    const source = config.auto_proxy_pool_source || 'mihomo-proxy-pool';
+    if (source !== 'mihomo-proxy-pool') {
+        return { proxyPool: [], proxyPoolNames: [] };
+    }
+
+    const host = config.auto_proxy_pool_host || '127.0.0.1';
+    const startPort = Number(config.auto_proxy_pool_start_port || 18001);
+    const endPort = Number(config.auto_proxy_pool_end_port || 18032);
+    const configPath = path.join(process.env.HOME || '', '.config', 'mihomo-proxy-pool', 'config.yaml');
+
+    if (!fs.existsSync(configPath)) {
+        logger.warn(`[CodexRegister] Mihomo proxy pool config not found: ${configPath}`);
+        return { proxyPool: [], proxyPoolNames: [] };
+    }
+
+    const raw = fs.readFileSync(configPath, 'utf8');
+    const portToName = new Map();
+    let currentProxyGroup = null;
+    let currentListenerPort = null;
+    let currentListenerProxy = null;
+
+    for (const line of raw.split('\n')) {
+        const proxyGroupMatch = line.match(/^\s*- name:\s*['\"]?(proxy-(\d+))['\"]?\s*$/);
+        if (proxyGroupMatch) {
+            currentProxyGroup = proxyGroupMatch[1];
+            continue;
+        }
+
+        if (currentProxyGroup) {
+            const proxyNameMatch = line.match(/^\s*-\s*['\"](.+?)['\"]\s*$/);
+            if (proxyNameMatch) {
+                const port = Number(currentProxyGroup.replace('proxy-', ''));
+                if (!Number.isNaN(port)) {
+                    portToName.set(port, proxyNameMatch[1]);
+                }
+                currentProxyGroup = null;
+                continue;
+            }
+        }
+
+        const listenerNameMatch = line.match(/^\s*- name:\s*(proxy-(\d+))\s*$/);
+        if (listenerNameMatch) {
+            currentListenerPort = null;
+            currentListenerProxy = null;
+            continue;
+        }
+
+        const portMatch = line.match(/^\s*port:\s*(\d+)\s*$/);
+        if (portMatch) {
+            currentListenerPort = Number(portMatch[1]);
+            continue;
+        }
+
+        const proxyMatch = line.match(/^\s*proxy:\s*['\"]?(proxy-(\d+))['\"]?\s*$/);
+        if (proxyMatch) {
+            currentListenerProxy = proxyMatch[1];
+            const groupPort = Number(currentListenerProxy.replace('proxy-', ''));
+            if (currentListenerPort && groupPort === currentListenerPort && currentListenerPort >= startPort && currentListenerPort <= endPort) {
+                const nodeName = portToName.get(currentListenerPort);
+                if (nodeName) {
+                    portToName.set(currentListenerPort, nodeName);
+                }
+            }
+        }
+    }
+
+    const proxyPool = [];
+    const proxyPoolNames = [];
+    for (let port = startPort; port <= endPort; port += 1) {
+        const nodeName = portToName.get(port);
+        if (!nodeName) continue;
+        proxyPool.push(`http://${host}:${port}`);
+        proxyPoolNames.push(nodeName);
+    }
+
+    logger.info(`[CodexRegister] Auto proxy pool loaded: ${proxyPool.length} node(s) from Mihomo`);
+    return { proxyPool, proxyPoolNames };
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT_DIR = __dirname;
 const SCRIPT_PATH = path.join(SCRIPT_DIR, 'chatgpt_register.py');
@@ -89,9 +169,22 @@ export async function runRegisterScript(count, workers = 3) {
     const tokenDir = path.join(process.cwd(), 'configs', 'codex');
     fs.mkdirSync(tokenDir, { recursive: true });
 
-    const proxyPool = Array.isArray(config.proxy_pool)
+    let proxyPool = Array.isArray(config.proxy_pool)
         ? config.proxy_pool.filter(item => typeof item === 'string' && item.trim())
         : [];
+    let proxyPoolNames = Array.isArray(config.proxy_pool_names)
+        ? config.proxy_pool_names.filter(item => typeof item === 'string' && item.trim())
+        : [];
+
+    if ((config.proxy_mode || '').trim().toLowerCase() === 'auto_pool') {
+        const autoPool = loadAutoProxyPoolFromMihomo(config);
+        if (autoPool.proxyPool.length > 0) {
+            proxyPool = autoPool.proxyPool;
+            proxyPoolNames = autoPool.proxyPoolNames;
+        }
+    }
+
+    const singleProxy = (config.proxy_mode || '').trim().toLowerCase() === 'auto_pool' ? '' : (config.proxy || '');
 
     const env = {
         ...process.env,
@@ -101,13 +194,14 @@ export async function runRegisterScript(count, workers = 3) {
         TEMPMAIL_API_BASE: config.tempmail_api_base || '',
         TEMPMAIL_DOMAIN: config.tempmail_domain || '',
         DUCKMAIL_BEARER: config.duckmail_bearer || '',
-        HTTP_PROXY: config.proxy || '',
-        HTTPS_PROXY: config.proxy || '',
-        ALL_PROXY: config.proxy || '',
-        PROXY: config.proxy || '',
+        HTTP_PROXY: singleProxy,
+        HTTPS_PROXY: singleProxy,
+        ALL_PROXY: singleProxy,
+        PROXY: singleProxy,
         PROXY_MODE: config.proxy_mode || '',
         PROXY_STRATEGY: config.proxy_strategy || '',
         PROXY_POOL: JSON.stringify(proxyPool),
+        PROXY_POOL_NAMES: JSON.stringify(proxyPoolNames),
         ENABLE_OAUTH: 'true',
         OAUTH_REQUIRED: 'false',
         TOKEN_JSON_DIR: tokenDir,
