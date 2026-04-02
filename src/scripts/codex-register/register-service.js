@@ -32,71 +32,34 @@ function loadAutoProxyPoolFromMihomo(config) {
     }
 
     const raw = fs.readFileSync(configPath, 'utf8');
+    const lines = raw.split('\n');
     const portToName = new Map();
-    let currentProxyGroup = null;
-    let currentListenerPort = null;
     let inProxyGroups = false;
-    let inListeners = false;
 
-    for (const line of raw.split('\n')) {
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
         if (/^proxy-groups:\s*$/.test(line)) {
             inProxyGroups = true;
-            inListeners = false;
-            currentProxyGroup = null;
-            currentListenerPort = null;
             continue;
         }
-
-        if (/^listeners:\s*$/.test(line)) {
-            inProxyGroups = false;
-            inListeners = true;
-            currentProxyGroup = null;
-            currentListenerPort = null;
-            continue;
+        if (inProxyGroups && /^rules:\s*$/.test(line)) {
+            break;
         }
+        if (!inProxyGroups) continue;
 
-        if (inProxyGroups) {
-            const proxyGroupMatch = line.match(/^\s*- name:\s*['\"]?(proxy-(\d+))['\"]?\s*$/);
-            if (proxyGroupMatch) {
-                currentProxyGroup = proxyGroupMatch[1];
-                continue;
-            }
+        const groupMatch = line.match(/^\s*- name:\s*['"]?proxy-(\d+)['"]?\s*$/);
+        if (!groupMatch) continue;
 
-            if (currentProxyGroup) {
-                const proxyNameMatch = line.match(/^\s*-\s*['\"](.+?)['\"]\s*$/);
-                if (proxyNameMatch) {
-                    const port = Number(currentProxyGroup.replace('proxy-', ''));
-                    if (!Number.isNaN(port)) {
-                        portToName.set(port, proxyNameMatch[1]);
-                    }
-                    currentProxyGroup = null;
-                    continue;
-                }
-            }
-        }
+        const port = Number(groupMatch[1]);
+        if (Number.isNaN(port) || port < startPort || port > endPort) continue;
 
-        if (inListeners) {
-            const listenerNameMatch = line.match(/^\s*- name:\s*['\"]?(proxy-(\d+))['\"]?\s*$/);
-            if (listenerNameMatch) {
-                currentListenerPort = null;
-                continue;
-            }
-
-            const portMatch = line.match(/^\s*port:\s*(\d+)\s*$/);
-            if (portMatch) {
-                currentListenerPort = Number(portMatch[1]);
-                continue;
-            }
-
-            const proxyMatch = line.match(/^\s*proxy:\s*['\"]?(proxy-(\d+))['\"]?\s*$/);
-            if (proxyMatch) {
-                const groupPort = Number(proxyMatch[1].replace('proxy-', ''));
-                if (currentListenerPort && groupPort === currentListenerPort && currentListenerPort >= startPort && currentListenerPort <= endPort) {
-                    const nodeName = portToName.get(currentListenerPort);
-                    if (nodeName) {
-                        portToName.set(currentListenerPort, nodeName);
-                    }
-                }
+        for (let j = i + 1; j < lines.length; j += 1) {
+            const nextLine = lines[j];
+            if (/^\s*- name:\s*/.test(nextLine)) break;
+            const proxyNameMatch = nextLine.match(/^\s*-\s*['"](.+?)['"]\s*$/);
+            if (proxyNameMatch) {
+                portToName.set(port, proxyNameMatch[1]);
+                break;
             }
         }
     }
@@ -201,7 +164,7 @@ function ensureCodexRegisterPython() {
     }
 
     logger.warn('[CodexRegister] Python venv missing or incomplete, attempting self-heal...');
-    const setup = spawnSync('bash', ['-lc', "python3 -m venv venv311 && ./venv311/bin/pip install --upgrade pip >/tmp/codex-venv-pip.log 2>&1 && ./venv311/bin/pip install curl_cffi beautifulsoup4 requests pyyaml python-dotenv >/tmp/codex-venv-deps.log 2>&1"], {
+    const setup = spawnSync('bash', ['-lc', "python3 -m venv venv311 && ./venv311/bin/pip install --upgrade pip >/dev/null 2>&1 && ./venv311/bin/pip install curl_cffi beautifulsoup4 requests pyyaml python-dotenv >/dev/null 2>&1"], {
         cwd: SCRIPT_DIR,
         encoding: 'utf8'
     });
