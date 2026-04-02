@@ -35,48 +35,67 @@ function loadAutoProxyPoolFromMihomo(config) {
     const portToName = new Map();
     let currentProxyGroup = null;
     let currentListenerPort = null;
-    let currentListenerProxy = null;
+    let inProxyGroups = false;
+    let inListeners = false;
 
     for (const line of raw.split('\n')) {
-        const proxyGroupMatch = line.match(/^\s*- name:\s*['\"]?(proxy-(\d+))['\"]?\s*$/);
-        if (proxyGroupMatch) {
-            currentProxyGroup = proxyGroupMatch[1];
+        if (/^proxy-groups:\s*$/.test(line)) {
+            inProxyGroups = true;
+            inListeners = false;
+            currentProxyGroup = null;
+            currentListenerPort = null;
             continue;
         }
 
-        if (currentProxyGroup) {
-            const proxyNameMatch = line.match(/^\s*-\s*['\"](.+?)['\"]\s*$/);
-            if (proxyNameMatch) {
-                const port = Number(currentProxyGroup.replace('proxy-', ''));
-                if (!Number.isNaN(port)) {
-                    portToName.set(port, proxyNameMatch[1]);
-                }
-                currentProxyGroup = null;
+        if (/^listeners:\s*$/.test(line)) {
+            inProxyGroups = false;
+            inListeners = true;
+            currentProxyGroup = null;
+            currentListenerPort = null;
+            continue;
+        }
+
+        if (inProxyGroups) {
+            const proxyGroupMatch = line.match(/^\s*- name:\s*['\"]?(proxy-(\d+))['\"]?\s*$/);
+            if (proxyGroupMatch) {
+                currentProxyGroup = proxyGroupMatch[1];
                 continue;
+            }
+
+            if (currentProxyGroup) {
+                const proxyNameMatch = line.match(/^\s*-\s*['\"](.+?)['\"]\s*$/);
+                if (proxyNameMatch) {
+                    const port = Number(currentProxyGroup.replace('proxy-', ''));
+                    if (!Number.isNaN(port)) {
+                        portToName.set(port, proxyNameMatch[1]);
+                    }
+                    currentProxyGroup = null;
+                    continue;
+                }
             }
         }
 
-        const listenerNameMatch = line.match(/^\s*- name:\s*(proxy-(\d+))\s*$/);
-        if (listenerNameMatch) {
-            currentListenerPort = null;
-            currentListenerProxy = null;
-            continue;
-        }
+        if (inListeners) {
+            const listenerNameMatch = line.match(/^\s*- name:\s*['\"]?(proxy-(\d+))['\"]?\s*$/);
+            if (listenerNameMatch) {
+                currentListenerPort = null;
+                continue;
+            }
 
-        const portMatch = line.match(/^\s*port:\s*(\d+)\s*$/);
-        if (portMatch) {
-            currentListenerPort = Number(portMatch[1]);
-            continue;
-        }
+            const portMatch = line.match(/^\s*port:\s*(\d+)\s*$/);
+            if (portMatch) {
+                currentListenerPort = Number(portMatch[1]);
+                continue;
+            }
 
-        const proxyMatch = line.match(/^\s*proxy:\s*['\"]?(proxy-(\d+))['\"]?\s*$/);
-        if (proxyMatch) {
-            currentListenerProxy = proxyMatch[1];
-            const groupPort = Number(currentListenerProxy.replace('proxy-', ''));
-            if (currentListenerPort && groupPort === currentListenerPort && currentListenerPort >= startPort && currentListenerPort <= endPort) {
-                const nodeName = portToName.get(currentListenerPort);
-                if (nodeName) {
-                    portToName.set(currentListenerPort, nodeName);
+            const proxyMatch = line.match(/^\s*proxy:\s*['\"]?(proxy-(\d+))['\"]?\s*$/);
+            if (proxyMatch) {
+                const groupPort = Number(proxyMatch[1].replace('proxy-', ''));
+                if (currentListenerPort && groupPort === currentListenerPort && currentListenerPort >= startPort && currentListenerPort <= endPort) {
+                    const nodeName = portToName.get(currentListenerPort);
+                    if (nodeName) {
+                        portToName.set(currentListenerPort, nodeName);
+                    }
                 }
             }
         }
