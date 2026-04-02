@@ -10,6 +10,7 @@
   "proxy": "http://127.0.0.1:7890",
   "proxy_mode": "single",
   "proxy_pool": [],
+  "proxy_pool_names": [],
   "proxy_strategy": "round_robin",
   "output_file": "registered_accounts.txt",
   "enable_oauth": true,

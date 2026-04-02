@@ -333,11 +333,20 @@ async function linkSingleCredential(config, credPath) {
         }
         
         // 创建新的提供商配置
+        let customName = '';
+        try {
+            const cred = JSON.parse(fs.readFileSync(absolutePath, 'utf8'));
+            customName = typeof cred.custom_name === 'string' ? cred.custom_name.trim() : '';
+        } catch (error) {
+            logger.warn(`[Auto-Link] Failed to read custom_name from ${relativePath}: ${error.message}`);
+        }
+
         const newProvider = createProviderConfig({
             credPathKey,
             credPath: formatSystemPath(relativePath),
             defaultCheckModel,
-            needsProjectId
+            needsProjectId,
+            customName
         });
         
         // 添加到配置
@@ -387,11 +396,20 @@ async function scanProviderDirectory(dirPath, linkedPaths, newProviders, options
                     
                     if (!isLinked) {
                         // 使用公共方法创建新的提供商配置
+                        let customName = '';
+                        try {
+                            const cred = JSON.parse(await pfs.readFile(fullPath, 'utf8'));
+                            customName = typeof cred.custom_name === 'string' ? cred.custom_name.trim() : '';
+                        } catch (error) {
+                            logger.warn(`[Auto-Link] Failed to read custom_name from ${relativePath}: ${error.message}`);
+                        }
+
                         const newProvider = createProviderConfig({
                             credPathKey,
                             credPath: formatSystemPath(relativePath),
                             defaultCheckModel,
-                            needsProjectId
+                            needsProjectId,
+                            customName
                         });
                         
                         newProviders.push(newProvider);

@@ -120,6 +120,17 @@ else:
     config_proxy_pool = _CONFIG.get("proxy_pool") or []
     PROXY_POOL = [item.strip() for item in config_proxy_pool if isinstance(item, str) and item.strip()]
 
+_raw_proxy_pool_names = os.environ.get("PROXY_POOL_NAMES", "")
+if _raw_proxy_pool_names:
+    try:
+        parsed_proxy_pool_names = json.loads(_raw_proxy_pool_names)
+        PROXY_POOL_NAMES = [str(item).strip() for item in parsed_proxy_pool_names if str(item).strip()]
+    except Exception:
+        PROXY_POOL_NAMES = []
+else:
+    config_proxy_pool_names = _CONFIG.get("proxy_pool_names") or []
+    PROXY_POOL_NAMES = [str(item).strip() for item in config_proxy_pool_names if str(item).strip()]
+
 if MAIL_PROVIDER == "tempmail":
     if not TEMPMAIL_ADMIN_AUTH:
         print("⚠️ 警告: 未设置 TEMPMAIL_ADMIN_AUTH，请在 config.json 中设置或设置环境变量")
@@ -399,7 +410,15 @@ def _decode_jwt_payload(token: str):
         return {}
 
 
-def _save_codex_tokens(email: str, tokens: dict):
+def _normalize_proxy_node_name(proxy_node_name: str = None, fallback_proxy: str = None):
+    node_name = (proxy_node_name or "").strip()
+    if node_name:
+        return node_name
+    fallback = (fallback_proxy or "").strip()
+    return fallback or "直连"
+
+
+def _save_codex_tokens(email: str, tokens: dict, proxy_node_name: str = None, fallback_proxy: str = None):
     access_token = tokens.get("access_token", "")
     refresh_token = tokens.get("refresh_token", "")
     id_token = tokens.get("id_token", "")
@@ -432,6 +451,7 @@ def _save_codex_tokens(email: str, tokens: dict):
     from datetime import datetime, timezone, timedelta
 
     now = datetime.now(tz=timezone(timedelta(hours=8)))
+    normalized_proxy_node_name = _normalize_proxy_node_name(proxy_node_name, fallback_proxy)
     token_data = {
         "type": "codex",
         "email": email,
@@ -441,6 +461,8 @@ def _save_codex_tokens(email: str, tokens: dict):
         "access_token": access_token,
         "last_refresh": now.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
         "refresh_token": refresh_token,
+        "proxy_node_name": normalized_proxy_node_name,
+        "custom_name": normalized_proxy_node_name,
     }
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -521,14 +543,20 @@ def _pick_proxy_for_account(idx: int):
     if _get_proxy_pool_enabled():
         strategy = PROXY_STRATEGY if PROXY_STRATEGY in {"round_robin", "random"} else "round_robin"
         if strategy == "random":
-            return random.choice(PROXY_POOL)
+            proxy = random.choice(PROXY_POOL)
+            proxy_idx = PROXY_POOL.index(proxy)
+            proxy_name = PROXY_POOL_NAMES[proxy_idx] if proxy_idx < len(PROXY_POOL_NAMES) else proxy
+            return proxy, proxy_name
 
         with _proxy_lock:
-            proxy = PROXY_POOL[_proxy_rr_index % len(PROXY_POOL)]
+            proxy_idx = _proxy_rr_index % len(PROXY_POOL)
+            proxy = PROXY_POOL[proxy_idx]
             _proxy_rr_index += 1
-            return proxy
+            proxy_name = PROXY_POOL_NAMES[proxy_idx] if proxy_idx < len(PROXY_POOL_NAMES) else proxy
+            return proxy, proxy_name
 
-    return DEFAULT_PROXY or None
+    fallback_proxy = DEFAULT_PROXY or None
+    return fallback_proxy, fallback_proxy or "直连"
 
 
 # ================= DuckMail 邮箱函数 =================
@@ -1864,9 +1892,10 @@ def _register_one(idx, total, proxy, output_file):
     reg = None
     try:
         if _get_proxy_pool_enabled():
-            selected_proxy = _pick_proxy_for_account(idx)
+            selected_proxy, proxy_node_name = _pick_proxy_for_account(idx)
         else:
             selected_proxy = proxy if proxy is not None else DEFAULT_PROXY or None
+            proxy_node_name = selected_proxy or "直连"
         reg = ChatGPTRegister(proxy=selected_proxy, tag=f"{idx}")
 
         # 1. 创建 DuckMail 临时邮箱
@@ -1883,6 +1912,7 @@ def _register_one(idx, total, proxy, output_file):
             print(f"\n{'='*60}")
             print(f"  [{idx}/{total}] 注册: {email}")
             print(f"  代理: {selected_proxy or '直连'}")
+            print(f"  节点名: {proxy_node_name}")
             print(f"  ChatGPT密码: {chatgpt_password}")
             print(f"  邮箱密码: {email_pwd}")
             print(f"  姓名: {name} | 生日: {birthdate}")
@@ -1898,8 +1928,8 @@ def _register_one(idx, total, proxy, output_file):
             tokens = reg.perform_codex_oauth_login_http(email, chatgpt_password, mail_token=mail_token)
             oauth_ok = bool(tokens and tokens.get("access_token"))
             if oauth_ok:
-                _save_codex_tokens(email, tokens)
-                reg._print("[OAuth] Token 已保存")
+                _save_codex_tokens(email, tokens, proxy_node_name=proxy_node_name, fallback_proxy=selected_proxy)
+                reg._print(f"[OAuth] Token 已保存，自定义名称: {proxy_node_name}")
             else:
                 msg = "OAuth 获取失败"
                 if OAUTH_REQUIRED:
